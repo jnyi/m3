@@ -405,7 +405,9 @@ func (p *parseState) walk(node pql.Node) error {
 		}
 
 		return p.addLazyUnaryTransform(unaryOp)
-
+	// case *pql.SubqueryExpr:
+	// 	fmt.Printf("SubqueryExpr %T, %v\n", node, node)
+	// 	return nil
 	default:
 		return fmt.Errorf("promql.Walk: unhandled node type %T, %v", node, node)
 	}

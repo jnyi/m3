@@ -21,6 +21,7 @@
 package plan
 
 import (
+	"bytes"
 	"fmt"
 
 	"github.com/m3db/m3/src/query/parser"
@@ -79,7 +80,11 @@ func NewLogicalPlan(transforms parser.Nodes, edges parser.Edges) (LogicalPlan, e
 }
 
 func (l LogicalPlan) String() string {
-	return fmt.Sprintf("Plan steps: %s, Pipeline: %s", l.Steps, l.Pipeline)
+	var buffer bytes.Buffer
+	for _, id := range l.Pipeline {
+		buffer.WriteString(fmt.Sprintf("Step %s: %s\n", id, l.Steps[id]))
+	}
+	return buffer.String()
 }
 
 // Clone the plan

@@ -78,6 +78,7 @@ TOOLS :=               \
 	split_shards         \
 	split_index_shards   \
 	query_index_segments \
+	query_parser         \
 	clone_fileset        \
 	dtest                \
 	verify_data_files    \

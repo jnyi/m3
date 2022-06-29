@@ -21,6 +21,7 @@
 package plan
 
 import (
+	"bytes"
 	"fmt"
 	"time"
 
@@ -162,6 +163,10 @@ func (p PhysicalPlan) Step(ID parser.NodeID) (LogicalStep, bool) {
 
 // String representation of the physical plan.
 func (p PhysicalPlan) String() string {
-	return fmt.Sprintf("StepCount: %s, Pipeline: %s, Result: %s, TimeSpec: %v",
-		p.steps, p.pipeline, p.ResultStep, p.TimeSpec)
+	var buffer bytes.Buffer
+	buffer.WriteString(fmt.Sprintf("TimeSpec: %v, Result: %s\n", p.TimeSpec, p.ResultStep))
+	for _, id := range p.pipeline {
+		buffer.WriteString(fmt.Sprintf("Step %s: %s\n", id, p.steps[id]))
+	}
+	return buffer.String()
 }
