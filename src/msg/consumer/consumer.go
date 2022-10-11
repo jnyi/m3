@@ -77,6 +77,8 @@ type metrics struct {
 	ackSent            tally.Counter
 	ackEncodeError     tally.Counter
 	ackWriteError      tally.Counter
+	newConsumer        tally.Counter
+	close              tally.Counter
 	// the duration between the producer sending the message and the consumer reading the message.
 	receiveLatency tally.Histogram
 	// the duration between the consumer reading the message and sending an ack to the producer.
@@ -90,6 +92,8 @@ func newConsumerMetrics(scope tally.Scope) metrics {
 		ackSent:            scope.Counter("ack-sent"),
 		ackEncodeError:     scope.Counter("ack-encode-error"),
 		ackWriteError:      scope.Counter("ack-write-error"),
+		newConsumer:        scope.Counter("new-consumer"),
+		close:              scope.Counter("close"),
 		receiveLatency: scope.Histogram("receive-latency",
 			// 10ms, 20ms, 40ms, 80ms, 160ms, 320ms, 640ms, 1.2s, 2.4s, 4.8s, 9.6s
 			tally.MustMakeExponentialDurationBuckets(time.Millisecond*10, 2, 11)),
@@ -132,7 +136,7 @@ func newConsumer(
 		rwOpts   = opts.DecoderOptions().RWOptions()
 		writerFn = rwOpts.ResettableWriterFn()
 	)
-
+	m.newConsumer.Inc(1)
 	return &consumer{
 		opts:    opts,
 		mPool:   mPool,
@@ -257,7 +261,10 @@ func (c *consumer) Close() {
 	}
 	c.closed = true
 	c.Unlock()
-
+	// Release the bufio.NewWriterSize() and bufio.NewReaderSzie()
+	c.m.close.Inc(1)
+	c.w.Reset(nil)
+	c.decoder.ResetReader(nil)
 	close(c.doneCh)
 	c.wg.Wait()
 	c.conn.Close()
