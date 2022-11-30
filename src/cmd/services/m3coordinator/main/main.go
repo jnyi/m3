@@ -42,13 +42,13 @@ func main() {
 		log.Fatalf("error loading config: %v", err)
 	}
 
-  if cfgOpts.ShouldValidateConfigAndExit && cfg.Downsample.Rules != nil {
-    if err := downsample.ValidateAggregationRules(*cfg.Downsample.Rules); err != nil {
-		  log.Fatalf("error validating config: %v", err)
-    }
-    log.Print("the config is valid.")
-    return
-  }
+	if cfgOpts.ShouldValidateConfigAndExit && cfg.Downsample.Rules != nil {
+		if err := downsample.ValidateAggregationRules(*cfg.Downsample.Rules); err != nil {
+			log.Fatalf("error validating config: %v", err)
+		}
+		log.Print("the config is valid.")
+		return
+	}
 
 	server.Run(server.RunOptions{
 		Config: cfg,
