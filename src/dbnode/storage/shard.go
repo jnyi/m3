@@ -894,6 +894,7 @@ func (s *dbShard) purgeExpiredSeries(expiredEntries []*Entry) int {
 		closedSeries++
 	}
 	s.Unlock()
+	s.logger.Debug("purgeExpiredSeries purged series", zap.Int("purgedSeries", closedSeries))
 	return closedSeries
 }
 
