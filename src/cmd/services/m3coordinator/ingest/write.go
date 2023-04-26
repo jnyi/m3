@@ -110,8 +110,6 @@ type WriteOptions struct {
 
 	DownsampleOverride bool
 	WriteOverride      bool
-
-	KeptHeaders map[string]string
 }
 
 type downsamplerAndWriterMetrics struct {
@@ -355,8 +353,6 @@ func (d *downsamplerAndWriter) writeToStorage(
 			Unit:       unit,
 			Annotation: annotation,
 			Attributes: storageAttributesFromPolicy(unaggregatedStoragePolicy),
-
-			KeptHeaders: overrides.KeptHeaders,
 		})
 		if err != nil {
 			return err
@@ -385,8 +381,6 @@ func (d *downsamplerAndWriter) writeToStorage(
 				Unit:       unit,
 				Annotation: annotation,
 				Attributes: storageAttributesFromPolicy(p),
-
-				KeptHeaders: overrides.KeptHeaders,
 			})
 			if err == nil {
 				err = d.store.Write(ctx, writeQuery)
@@ -470,8 +464,6 @@ func (d *downsamplerAndWriter) WriteBatch(
 						Unit:       value.Unit,
 						Annotation: value.Annotation,
 						Attributes: storageAttributesFromPolicy(p),
-
-						KeptHeaders: overrides.KeptHeaders,
 					})
 					if err == nil {
 						err = d.store.Write(ctx, writeQuery)

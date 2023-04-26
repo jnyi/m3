@@ -131,7 +131,7 @@ func TestWriteQueryConverter(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			q, err := storage.NewWriteQuery(tc.input)
 			require.NoError(t, err)
-			assert.Equal(t, tc.expected, convertWriteQuery(q))
+			assert.Equal(t, tc.expected, convertWriteQuery([]*storage.WriteQuery{q}))
 		})
 	}
 }

@@ -57,6 +57,8 @@ func TestWrite(t *testing.T) {
 		endpoints: []EndpointOptions{{name: "testEndpoint", address: fakeProm.WriteAddr()}},
 		scope:     scope,
 		logger:    logger,
+		poolSize:  1,
+		queueSize: 1,
 	})
 	require.NoError(t, err)
 	defer closeWithCheck(t, promStorage)

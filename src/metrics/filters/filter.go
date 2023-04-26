@@ -26,6 +26,7 @@ import (
 	"fmt"
 
 	"github.com/m3db/m3/src/metrics/metric/id"
+	"github.com/m3db/m3/src/query/models"
 )
 
 var (
@@ -83,8 +84,12 @@ type Filter interface {
 
 // TagsFilter matches a string of tags against certain conditions.
 type TagsFilter interface {
+	fmt.Stringer
 	// Matches returns true if the conditions are met.
 	Matches(val []byte, opts TagMatchOptions) (bool, error)
+
+	// The original TagsFilter only works with encoded tags and need to decode tags using a decoder.
+	MatchTags(tags models.Tags) bool
 }
 
 // TagMatchOptions are the options for a TagsFilter match.
