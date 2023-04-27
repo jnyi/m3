@@ -93,3 +93,57 @@ func TestReadOptimizedFilter(t *testing.T) {
 		assert.False(t, ReadOptimizedFilter(&fetchQueryToOregionDev, store))
 	}
 }
+
+func TestReadOptimizedFilterWithRegex(t *testing.T) {
+	fetchQuery := storage.FetchQuery{
+		TagMatchers: models.Matchers{
+			models.Matcher{
+				Type:  models.MatchRegexp,
+				Name:  []byte(storageNameLabelKey),
+				Value: []byte("suffix-a|suffix-b|suffix-c"),
+			},
+			models.Matcher{
+				Type:  models.MatchRegexp,
+				Name:  []byte("some-other-label"),
+				Value: []byte("suffix-d"),
+			},
+		},
+	}
+	{
+		store := mock.NewMockStorageWithName(localStorageName)
+		assert.True(t, ReadOptimizedFilter(&fetchQuery, store))
+	}
+	{
+		store := mock.NewMockStorageWithName("query-endpoint-suffix-a")
+		assert.True(t, ReadOptimizedFilter(&fetchQuery, store))
+	}
+	{
+		store := mock.NewMockStorageWithName("query-endpoint-suffix-b")
+		assert.True(t, ReadOptimizedFilter(&fetchQuery, store))
+	}
+	{
+		store := mock.NewMockStorageWithName("query-endpoint-suffix-c")
+		assert.True(t, ReadOptimizedFilter(&fetchQuery, store))
+	}
+	{
+		store := mock.NewMockStorageWithName("query-endpoint-suffix-d")
+		assert.False(t, ReadOptimizedFilter(&fetchQuery, store))
+	}
+	{
+		store := mock.NewMockStorageWithName("query-endpoint-suffix")
+		assert.False(t, ReadOptimizedFilter(&fetchQuery, store))
+	}
+	fetchQuery = storage.FetchQuery{
+		TagMatchers: models.Matchers{
+			models.Matcher{
+				Type:  models.MatchRegexp,
+				Name:  []byte(storageNameLabelKey),
+				Value: []byte("suffix-d"),
+			},
+		},
+	}
+	{
+		store := mock.NewMockStorageWithName("query-endpoint-suffix-d")
+		assert.True(t, ReadOptimizedFilter(&fetchQuery, store))
+	}
+}

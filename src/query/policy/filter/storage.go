@@ -72,6 +72,14 @@ func ReadOptimizedFilter(query storage.Query, store storage.Storage) bool {
 				if !strings.HasSuffix(store.Name(), string(tagMatcher.Value)) {
 					return false
 				}
+			case models.MatchRegexp:
+			    // NB: only support 'shardName=~"aaa|bbb|ccc"' for now, where "aaa", "bbb", and "ccc" are plain strings instead of regex.
+				for _, matcherValue := range strings.Split(string(tagMatcher.Value), "|") {
+					if strings.HasSuffix(store.Name(), matcherValue) {
+						return true
+					}
+				}
+				return false
 			}
 		}
 	}
