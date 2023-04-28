@@ -120,14 +120,16 @@ func NewOptions(
 	clientOpts.DisableCompression = true // Already snappy compressed.
 
 	return Options{
-		endpoints:    endpoints,
-		httpOptions:  clientOpts,
-		scope:        scope,
-		logger:       logger,
-		queueSize:    *cfg.QueueSize,
-		poolSize:     *cfg.PoolSize,
-		tenantHeader: cfg.TenantHeader,
-		tenantRules:  tenantRules,
+		endpoints:     endpoints,
+		httpOptions:   clientOpts,
+		scope:         scope,
+		logger:        logger,
+		queueSize:     *cfg.QueueSize,
+		poolSize:      *cfg.PoolSize,
+		tenantDefault: cfg.TenantDefault,
+		tenantHeader:  cfg.TenantHeader,
+		tenantRules:   tenantRules,
+		tickDuration:  cfg.TickDuration,
 	}, nil
 }
 
@@ -155,6 +157,15 @@ func validateBackendConfiguration(cfg *config.PrometheusRemoteBackendConfigurati
 	}
 	if cfg.ConnectTimeout != nil && *cfg.ConnectTimeout < 0 {
 		return errors.New("connectTimeout can't be negative")
+	}
+	if cfg.TickDuration != nil && *cfg.TickDuration < 0 {
+		return errors.New("tickDuration can't be negative")
+	}
+	if cfg.TenantDefault == "" {
+		return errors.New("tenantDefault must be set")
+	}
+	if cfg.TenantHeader == "" {
+		return errors.New("tenantHeader must be set")
 	}
 
 	seenNames := map[string]struct{}{}

@@ -22,6 +22,8 @@
 package promremote
 
 import (
+	"time"
+
 	"github.com/m3db/m3/src/dbnode/client"
 	"github.com/m3db/m3/src/metrics/filters"
 	"github.com/m3db/m3/src/query/storage/m3"
@@ -42,8 +44,10 @@ type Options struct {
 	queueSize   int
 	poolSize    int
 
-	tenantHeader string
-	tenantRules  []TenantRule
+	tenantDefault string
+	tenantHeader  string
+	tenantRules   []TenantRule
+	tickDuration  *time.Duration
 }
 
 // Namespaces returns M3 namespaces from endpoint opts.

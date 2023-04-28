@@ -826,6 +826,7 @@ type RPCConfiguration struct {
 // PrometheusRemoteBackendConfiguration configures prometheus remote write backend.
 type PrometheusRemoteBackendConfiguration struct {
 	Endpoints       []PrometheusRemoteBackendEndpointConfiguration `yaml:"endpoints"`
+	TenantDefault   string                                         `yaml:"tenantDefault"`
 	TenantHeader    string                                         `yaml:"tenantHeader"`
 	TenantRules     []PrometheusRemoteBackendTenant                `yaml:"tenantRules"`
 	RequestTimeout  *time.Duration                                 `yaml:"requestTimeout"`
@@ -835,6 +836,7 @@ type PrometheusRemoteBackendConfiguration struct {
 	MaxIdleConns    *int                                           `yaml:"maxIdleConns"`
 	QueueSize       *int                                           `yaml:"queueSize"`
 	PoolSize        *int                                           `yaml:"poolSize"`
+	TickDuration    *time.Duration                                 `yaml:"tickDuration"`
 }
 
 type PrometheusRemoteBackendEndpointHeader struct {
