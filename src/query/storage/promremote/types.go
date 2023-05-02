@@ -45,7 +45,6 @@ type Options struct {
 	poolSize    int
 
 	tenantDefault string
-	tenantHeader  string
 	tenantRules   []TenantRule
 	tickDuration  *time.Duration
 }
@@ -69,7 +68,8 @@ type EndpointOptions struct {
 	name              string
 	address           string
 	attributes        storagemetadata.Attributes
-	headers           map[string]string
+	tenantHeader      string
+	otherHeaders      map[string]string
 	downsampleOptions *m3.ClusterNamespaceDownsampleOptions
 }
 

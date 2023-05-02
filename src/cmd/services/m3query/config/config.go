@@ -827,7 +827,6 @@ type RPCConfiguration struct {
 type PrometheusRemoteBackendConfiguration struct {
 	Endpoints       []PrometheusRemoteBackendEndpointConfiguration `yaml:"endpoints"`
 	TenantDefault   string                                         `yaml:"tenantDefault"`
-	TenantHeader    string                                         `yaml:"tenantHeader"`
 	TenantRules     []PrometheusRemoteBackendTenant                `yaml:"tenantRules"`
 	RequestTimeout  *time.Duration                                 `yaml:"requestTimeout"`
 	ConnectTimeout  *time.Duration                                 `yaml:"connectTimeout"`
@@ -853,7 +852,9 @@ type PrometheusRemoteBackendTenant struct {
 type PrometheusRemoteBackendEndpointConfiguration struct {
 	Name    string `yaml:"name"`
 	Address string `yaml:"address"`
-	// Headers to be added to each remote write request.
+	// TenantHeader is used to attribute tenant for the remote write request.
+	TenantHeader string `yaml:"tenantHeader"`
+	// Headers to be added to each remote write request, must not overlap with TenantHeader.
 	Headers []PrometheusRemoteBackendEndpointHeader `yaml:"headers"`
 	// When nil all unaggregated data will be sent to this endpoint.
 	StoragePolicy *PrometheusRemoteBackendStoragePolicyConfiguration `yaml:"storagePolicy"`
