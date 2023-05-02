@@ -26,6 +26,8 @@ import (
 	"strings"
 
 	"github.com/m3db/m3/src/cmd/services/m3query/config"
+	"github.com/m3db/m3/src/metrics/filters"
+
 	"github.com/m3db/m3/src/query/storage/m3"
 	"github.com/m3db/m3/src/query/storage/m3/storagemetadata"
 	xhttp "github.com/m3db/m3/src/x/net/http"
@@ -64,12 +66,12 @@ func NewOptions(
 				}
 			}
 		}
-		var headers map[string]string
-		if len(endpoint.Headers) != 0 {
-			headers = make(map[string]string, len(endpoint.Headers))
-			for _, header := range endpoint.Headers {
-				headers[header.Name] = header.Value
+		headers := make(map[string]string, len(endpoint.Headers))
+		for _, header := range endpoint.Headers {
+			if header.Name == cfg.TenantHeader {
+				return Options{}, fmt.Errorf("header %s is reserved for tenant header", cfg.TenantHeader)
 			}
+			headers[header.Name] = header.Value
 		}
 		endpoints = append(endpoints, EndpointOptions{
 			name:              endpoint.Name,
@@ -77,6 +79,25 @@ func NewOptions(
 			attributes:        attr,
 			headers:           headers,
 			downsampleOptions: downsampleOptions,
+		})
+	}
+	tenantRules := make([]TenantRule, 0, len(cfg.TenantRules))
+	for _, tenantRule := range cfg.TenantRules {
+		filterValues, err := filters.ValidateTagsFilter(tenantRule.Filter)
+		if err != nil {
+			return Options{}, fmt.Errorf("unable to parse tenant rule filter %s: %w",
+				tenantRule.Filter, err)
+		}
+		filter, err := filters.NewTagsFilter(filterValues, filters.Conjunction, filters.TagsFilterOptions{})
+		if err != nil {
+			return Options{}, fmt.Errorf("unable to create tenant rule filter %s: %w",
+				tenantRule.Filter, err)
+		}
+		logger.Info("adding tenant rule", zap.String("filter", tenantRule.Filter),
+			zap.String("tenant", tenantRule.Tenant))
+		tenantRules = append(tenantRules, TenantRule{
+			Filter: filter,
+			Tenant: tenantRule.Tenant,
 		})
 	}
 	clientOpts := xhttp.DefaultHTTPClientOptions()
@@ -99,12 +120,16 @@ func NewOptions(
 	clientOpts.DisableCompression = true // Already snappy compressed.
 
 	return Options{
-		endpoints:   endpoints,
-		httpOptions: clientOpts,
-		scope:       scope,
-		logger:      logger,
-		queueSize:   *cfg.QueueSize,
-		poolSize:    *cfg.PoolSize,
+		endpoints:     endpoints,
+		httpOptions:   clientOpts,
+		scope:         scope,
+		logger:        logger,
+		queueSize:     *cfg.QueueSize,
+		poolSize:      *cfg.PoolSize,
+		tenantDefault: cfg.TenantDefault,
+		tenantHeader:  cfg.TenantHeader,
+		tenantRules:   tenantRules,
+		tickDuration:  cfg.TickDuration,
 	}, nil
 }
 
@@ -132,6 +157,15 @@ func validateBackendConfiguration(cfg *config.PrometheusRemoteBackendConfigurati
 	}
 	if cfg.ConnectTimeout != nil && *cfg.ConnectTimeout < 0 {
 		return errors.New("connectTimeout can't be negative")
+	}
+	if cfg.TickDuration != nil && *cfg.TickDuration < 0 {
+		return errors.New("tickDuration can't be negative")
+	}
+	if cfg.TenantDefault == "" {
+		return errors.New("tenantDefault must be set")
+	}
+	if cfg.TenantHeader == "" {
+		return errors.New("tenantHeader must be set")
 	}
 
 	seenNames := map[string]struct{}{}

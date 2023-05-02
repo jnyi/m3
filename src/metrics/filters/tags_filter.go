@@ -28,6 +28,7 @@ import (
 
 	"github.com/m3db/m3/src/metrics/errors"
 	"github.com/m3db/m3/src/metrics/metric/id"
+	"github.com/m3db/m3/src/query/models"
 )
 
 const (
@@ -283,6 +284,43 @@ func (f *tagsFilter) Matches(id []byte, opts TagMatchOptions) (bool, error) {
 	}
 
 	return currIdx == len(f.tagFilters), nil
+}
+
+func (f *tagsFilter) MatchTags(tags models.Tags) bool {
+	if f.nameFilter == nil && len(f.tagFilters) == 0 {
+		return true
+	}
+	curr := 0
+	// Iterate over each of the metric's tags and rule's tag filters. They're both in sorted order.
+	for i := 0; i < len(tags.Tags) && curr < len(f.tagFilters); i++ {
+		tag := tags.Tags[i]
+		comparison := bytes.Compare(tag.Name, f.tagFilters[curr].name)
+		if comparison < 0 {
+			// If the tags don't match, we move onto the next metric tag.
+			// This is correct because not every one of the metric tag's need be represented in the rule.
+			continue
+		}
+		if comparison > 0 {
+			if f.op == Conjunction {
+				// For AND, if the current filter tag doesn't exist, bail immediately.
+				return false
+			}
+			// Iterate tagFilters for the OR case, i-- to stay on the same tag.
+			curr++
+			i--
+			continue
+		}
+		match := f.tagFilters[curr].valueFilter.Matches(tag.Value)
+		if match && f.op == Disjunction {
+			return true
+		}
+
+		if !match && f.op == Conjunction {
+			return false
+		}
+		curr++
+	}
+	return curr == len(f.tagFilters)
 }
 
 // ValidateTagsFilter validates whether a given string is a valid tags filter,

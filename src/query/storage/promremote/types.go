@@ -22,7 +22,10 @@
 package promremote
 
 import (
+	"time"
+
 	"github.com/m3db/m3/src/dbnode/client"
+	"github.com/m3db/m3/src/metrics/filters"
 	"github.com/m3db/m3/src/query/storage/m3"
 	"github.com/m3db/m3/src/query/storage/m3/storagemetadata"
 	"github.com/m3db/m3/src/x/ident"
@@ -40,6 +43,11 @@ type Options struct {
 	logger      *zap.Logger
 	queueSize   int
 	poolSize    int
+
+	tenantDefault string
+	tenantHeader  string
+	tenantRules   []TenantRule
+	tickDuration  *time.Duration
 }
 
 // Namespaces returns M3 namespaces from endpoint opts.
@@ -49,6 +57,11 @@ func (o Options) Namespaces() m3.ClusterNamespaces {
 		namespaces = append(namespaces, newClusterNamespace(endpoint))
 	}
 	return namespaces
+}
+
+type TenantRule struct {
+	Filter filters.TagsFilter
+	Tenant string
 }
 
 // EndpointOptions for single prometheus remote write capable endpoint.

@@ -27,7 +27,6 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -55,17 +54,26 @@ var errNoEndpoints = errors.New("write did not match any of known endpoints")
 func NewStorage(opts Options) (storage.Storage, error) {
 	client := xhttp.NewHTTPClient(opts.httpOptions)
 	scope := opts.scope.SubScope(metricsScope)
+	if opts.poolSize < 1 {
+		return nil, errors.New("poolSize must be greater than 0")
+	}
+	if opts.queueSize < 1 {
+		return nil, errors.New("queueSize must be greater than 0 to batch writes")
+	}
 	s := &promStorage{
 		opts:            opts,
 		client:          client,
 		endpointMetrics: initEndpointMetrics(opts.endpoints, scope),
 		droppedWrites:   scope.Counter("dropped_writes"),
+		enqueued:        scope.Counter("enqueued"),
+		batchWrite:      scope.Counter("batch_write"),
+		tickWrite:       scope.Counter("tick_write"),
 		logger:          opts.logger,
 		queryQueue:      make(chan *storage.WriteQuery, opts.queueSize),
 		workerPool:      xsync.NewWorkerPool(opts.poolSize),
-		pendingQuery:    make(map[queryOpts][]*storage.WriteQuery),
+		pendingQuery:    make(map[tenant][]*storage.WriteQuery),
 	}
-	s.StartAsync()
+	s.startAsync()
 	return s, nil
 }
 
@@ -75,53 +83,71 @@ type promStorage struct {
 	client          *http.Client
 	endpointMetrics map[string]instrument.MethodMetrics
 	droppedWrites   tally.Counter
+	enqueued        tally.Counter
+	batchWrite      tally.Counter
+	tickWrite       tally.Counter
 	logger          *zap.Logger
 	queryQueue      chan *storage.WriteQuery
 	workerPool      xsync.WorkerPool
-	pendingQuery    map[queryOpts][]*storage.WriteQuery
+	pendingQuery    map[tenant][]*storage.WriteQuery
 }
 
-type queryOpts struct {
-	attributes storagemetadata.Attributes
-	headers    string
+type tenant struct {
+	name string
+	attr storagemetadata.Attributes
 }
 
-func buildQueryOpts(query *storage.WriteQuery) queryOpts {
-	b := new(bytes.Buffer)
-	for k, v := range query.Options().KeptHeaders {
-		fmt.Fprintf(b, "%s=%s,", k, v)
+func (p *promStorage) getTenant(query *storage.WriteQuery) tenant {
+	for _, rule := range p.opts.tenantRules {
+		if ok := rule.Filter.MatchTags(query.Tags()); ok {
+			return tenant{
+				name: rule.Tenant,
+				attr: query.Attributes(),
+			}
+		}
 	}
-	if b.Len() > 0 {
-		b.Truncate(b.Len() - 1)
-	}
-	return queryOpts{
-		attributes: query.Attributes(),
-		headers:    b.String(),
+	return tenant{
+		name: p.opts.tenantDefault,
+		attr: query.Attributes(),
 	}
 }
 
-func (p *promStorage) StartAsync() {
+func (p *promStorage) startAsync() {
 	p.logger.Info("Start prometheus remote write storage async job",
 		zap.Int("poolSize", p.opts.poolSize))
 	p.workerPool.Init()
+	ticker := time.NewTicker(*p.opts.tickDuration)
 	go func() {
 		for {
 			ctx := context.Background()
 			select {
 			case query := <-p.queryQueue:
-				qOpts := buildQueryOpts(query)
-				if _, ok := p.pendingQuery[qOpts]; !ok {
-					p.pendingQuery[qOpts] = make([]*storage.WriteQuery, 0, p.opts.queueSize)
+				tenant := p.getTenant(query)
+				if _, ok := p.pendingQuery[tenant]; !ok {
+					p.pendingQuery[tenant] = make([]*storage.WriteQuery, 0, p.opts.queueSize)
 				}
-				p.pendingQuery[qOpts] = append(p.pendingQuery[qOpts], query)
-				if len(p.pendingQuery[qOpts]) >= p.opts.queueSize {
-					retain := p.pendingQuery[qOpts]
-					p.pendingQuery[qOpts] = nil
+				p.pendingQuery[tenant] = append(p.pendingQuery[tenant], query)
+				if len(p.pendingQuery[tenant]) >= p.opts.queueSize {
+					retain := p.pendingQuery[tenant]
+					p.batchWrite.Inc(int64(len(retain)))
+					p.pendingQuery[tenant] = nil
 					p.workerPool.Go(func() {
-						p.writeBatch(ctx, &qOpts, retain)
+						p.writeBatch(ctx, tenant, retain)
 					})
 				}
-				// TODO: add a timer to flush pending queries periodically
+			// TODO: add a timer to flush pending queries periodically
+			case <-ticker.C:
+				for tenant, queries := range p.pendingQuery {
+					if len(queries) == 0 {
+						continue
+					}
+					p.tickWrite.Inc(int64(len(queries)))
+					p.workerPool.Go(func() {
+						p.writeBatch(ctx, tenant, queries)
+					})
+					// clear the entry
+					delete(p.pendingQuery, tenant)
+				}
 			}
 		}
 	}()
@@ -130,14 +156,16 @@ func (p *promStorage) StartAsync() {
 func (p *promStorage) Write(ctx context.Context, query *storage.WriteQuery) error {
 	if query != nil {
 		p.queryQueue <- query
+		p.enqueued.Inc(1)
 	}
 	return nil
 }
 
-func (p *promStorage) writeBatch(ctx context.Context, qOpts *queryOpts, queries []*storage.WriteQuery) error {
+func (p *promStorage) writeBatch(ctx context.Context, tenant tenant, queries []*storage.WriteQuery) error {
 	p.logger.Debug("async write batch",
-		zap.String("attributes", qOpts.attributes.String()),
-		zap.String("headers", qOpts.headers),
+		zap.String("tenant", tenant.name),
+		zap.Duration("retention", tenant.attr.Retention),
+		zap.Duration("resolution", tenant.attr.Resolution),
 		zap.Int("size", len(queries)))
 	encoded, err := convertAndEncodeWriteQuery(queries)
 	if err != nil {
@@ -150,8 +178,8 @@ func (p *promStorage) writeBatch(ctx context.Context, qOpts *queryOpts, queries 
 	atLeastOneEndpointMatched := false
 	for _, endpoint := range p.opts.endpoints {
 		endpoint := endpoint
-		if endpoint.attributes.Resolution != qOpts.attributes.Resolution ||
-			endpoint.attributes.Retention != qOpts.attributes.Retention {
+		if endpoint.attributes.Resolution != tenant.attr.Resolution ||
+			endpoint.attributes.Retention != tenant.attr.Retention {
 			continue
 		}
 
@@ -161,7 +189,7 @@ func (p *promStorage) writeBatch(ctx context.Context, qOpts *queryOpts, queries 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			err := p.writeSingle(ctx, metrics, endpoint, qOpts.headers, bytes.NewReader(encoded))
+			err := p.writeSingle(ctx, metrics, endpoint, tenant, bytes.NewReader(encoded))
 			if err != nil {
 				errLock.Lock()
 				multiErr = multiErr.Add(err)
@@ -178,8 +206,8 @@ func (p *promStorage) writeBatch(ctx context.Context, qOpts *queryOpts, queries 
 		multiErr = multiErr.Add(errNoEndpoints)
 		p.logger.Warn(
 			"write did not match any of known endpoints",
-			zap.Duration("retention", qOpts.attributes.Retention),
-			zap.Duration("resolution", qOpts.attributes.Resolution),
+			zap.Duration("retention", tenant.attr.Retention),
+			zap.Duration("resolution", tenant.attr.Resolution),
 		)
 	}
 	return multiErr.FinalError()
@@ -193,10 +221,13 @@ func (p *promStorage) Close() error {
 	close(p.queryQueue)
 	ctx := context.Background()
 	var wg sync.WaitGroup
-	for qOpts, queries := range p.pendingQuery {
+	for tenant, queries := range p.pendingQuery {
+		if len(queries) == 0 {
+			continue
+		}
 		wg.Add(1)
 		p.workerPool.Go(func() {
-			p.writeBatch(ctx, &qOpts, queries)
+			p.writeBatch(ctx, tenant, queries)
 			wg.Done()
 		})
 	}
@@ -217,7 +248,7 @@ func (p *promStorage) writeSingle(
 	ctx context.Context,
 	metrics instrument.MethodMetrics,
 	endpoint EndpointOptions,
-	headers string,
+	tenant tenant,
 	encoded io.Reader,
 ) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.address, encoded)
@@ -226,18 +257,13 @@ func (p *promStorage) writeSingle(
 	}
 	req.Header.Set("content-encoding", "snappy")
 	req.Header.Set(xhttp.HeaderContentType, xhttp.ContentTypeProtobuf)
-	if endpoint.headers != nil && len(endpoint.headers) > 0 {
+	if len(endpoint.headers) > 0 {
 		for k, v := range endpoint.headers {
 			// set headers defined in remote endpoint options
 			req.Header.Set(k, v)
 		}
-	} else if len(headers) > 0 {
-		for _, header := range strings.Split(headers, ",") {
-			// set headers from upstream remote write request
-			kv := strings.Split(header, "=")
-			req.Header.Set(kv[0], kv[1])
-		}
 	}
+	req.Header.Set(p.opts.tenantHeader, tenant.name)
 
 	start := time.Now()
 	resp, err := p.client.Do(req)
