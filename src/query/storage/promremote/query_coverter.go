@@ -30,7 +30,7 @@ import (
 	"github.com/prometheus/prometheus/prompb"
 )
 
-var errNilQuery = errors.New("received nil query")
+var errNilQuery = errors.New("received nil query or no samples in query")
 
 func convertAndEncodeWriteQuery(queries []*storage.WriteQuery) ([]byte, error) {
 	promQuery := convertWriteQuery(queries)
@@ -47,7 +47,7 @@ func convertAndEncodeWriteQuery(queries []*storage.WriteQuery) ([]byte, error) {
 func convertWriteQuery(queries []*storage.WriteQuery) *prompb.WriteRequest {
 	ts := make([]prompb.TimeSeries, 0, len(queries))
 	for _, query := range queries {
-		if query == nil {
+		if query == nil || len(query.Datapoints()) == 0 {
 			continue
 		}
 		ourLabels := storage.TagsToPromLabels(query.Tags())
