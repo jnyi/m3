@@ -66,18 +66,19 @@ func NewOptions(
 				}
 			}
 		}
-		headers := make(map[string]string, len(endpoint.Headers))
+		otherHeaders := make(map[string]string, len(endpoint.Headers))
 		for _, header := range endpoint.Headers {
-			if header.Name == cfg.TenantHeader {
-				return Options{}, fmt.Errorf("header %s is reserved for tenant header", cfg.TenantHeader)
+			if header.Name == endpoint.TenantHeader {
+				return Options{}, fmt.Errorf("header %s is reserved for tenant header", endpoint.TenantHeader)
 			}
-			headers[header.Name] = header.Value
+			otherHeaders[header.Name] = header.Value
 		}
 		endpoints = append(endpoints, EndpointOptions{
 			name:              endpoint.Name,
 			address:           endpoint.Address,
 			attributes:        attr,
-			headers:           headers,
+			tenantHeader:      endpoint.TenantHeader,
+			otherHeaders:      otherHeaders,
 			downsampleOptions: downsampleOptions,
 		})
 	}
@@ -127,7 +128,6 @@ func NewOptions(
 		queueSize:     *cfg.QueueSize,
 		poolSize:      *cfg.PoolSize,
 		tenantDefault: cfg.TenantDefault,
-		tenantHeader:  cfg.TenantHeader,
 		tenantRules:   tenantRules,
 		tickDuration:  cfg.TickDuration,
 	}, nil
@@ -163,9 +163,6 @@ func validateBackendConfiguration(cfg *config.PrometheusRemoteBackendConfigurati
 	}
 	if cfg.TenantDefault == "" {
 		return errors.New("tenantDefault must be set")
-	}
-	if cfg.TenantHeader == "" {
-		return errors.New("tenantHeader must be set")
 	}
 
 	seenNames := map[string]struct{}{}

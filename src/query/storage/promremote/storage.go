@@ -266,13 +266,13 @@ func (p *promStorage) writeSingle(
 	}
 	req.Header.Set("content-encoding", "snappy")
 	req.Header.Set(xhttp.HeaderContentType, xhttp.ContentTypeProtobuf)
-	if len(endpoint.headers) > 0 {
-		for k, v := range endpoint.headers {
+	if len(endpoint.otherHeaders) > 0 {
+		for k, v := range endpoint.otherHeaders {
 			// set headers defined in remote endpoint options
 			req.Header.Set(k, v)
 		}
 	}
-	req.Header.Set(p.opts.tenantHeader, tenant.name)
+	req.Header.Set(endpoint.tenantHeader, tenant.name)
 
 	start := time.Now()
 	resp, err := p.client.Do(req)
