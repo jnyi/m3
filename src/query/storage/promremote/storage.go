@@ -139,6 +139,15 @@ func (p *promStorage) startAsync() {
 			case <-ticker.C:
 				for tenant, queries := range p.pendingQuery {
 					if len(queries) == 0 {
+						delete(p.pendingQuery, tenant)
+						continue
+					}
+					if len(queries) < 5 {
+						p.logger.Error("don't do tick flush for small batch with less than 5 samples, "+
+							"samples will be evently written to remote storage as it accumulates. "+
+							"This error is to detect if there are any corrupt tenants that never grow over 5 samples.",
+							zap.String("tenant", tenant.name), zap.Int("size", len(queries)),
+							zap.Any("example", queries[0]))
 						continue
 					}
 					p.tickWrite.Inc(int64(len(queries)))
