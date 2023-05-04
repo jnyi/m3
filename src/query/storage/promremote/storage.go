@@ -219,6 +219,9 @@ func (p *promStorage) writeBatch(ctx context.Context, tenant tenant, queries []*
 			zap.Duration("resolution", tenant.attr.Resolution),
 		)
 	}
+	if multiErr.FinalError() != nil {
+		p.logger.Error("error writing async batch", zap.Error(multiErr.FinalError()))
+	}
 	return multiErr.FinalError()
 }
 
