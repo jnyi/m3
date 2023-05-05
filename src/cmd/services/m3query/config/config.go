@@ -858,6 +858,8 @@ type PrometheusRemoteBackendEndpointConfiguration struct {
 	Headers []PrometheusRemoteBackendEndpointHeader `yaml:"headers"`
 	// When nil all unaggregated data will be sent to this endpoint.
 	StoragePolicy *PrometheusRemoteBackendStoragePolicyConfiguration `yaml:"storagePolicy"`
+	// TODO: for GEM PoV, we can use plain text, but for production we shall get this value from secret files.
+	ApiToken string `yaml:"apiToken"`
 }
 
 // PrometheusRemoteBackendStoragePolicyConfiguration configures storage policy for single endpoint.

@@ -23,6 +23,7 @@ package promremote
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -269,6 +270,13 @@ func (p *promStorage) writeSingle(
 	}
 	req.Header.Set("content-encoding", "snappy")
 	req.Header.Set(xhttp.HeaderContentType, xhttp.ContentTypeProtobuf)
+	if endpoint.apiToken != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Basic %s",
+			base64.StdEncoding.EncodeToString([]byte(
+				fmt.Sprintf("%s:%s", tenant.name, endpoint.apiToken),
+			)),
+		))
+	}
 	if len(endpoint.otherHeaders) > 0 {
 		for k, v := range endpoint.otherHeaders {
 			// set headers defined in remote endpoint options

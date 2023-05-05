@@ -70,6 +70,7 @@ type EndpointOptions struct {
 	attributes        storagemetadata.Attributes
 	tenantHeader      string
 	otherHeaders      map[string]string
+	apiToken          string
 	downsampleOptions *m3.ClusterNamespaceDownsampleOptions
 }
 
