@@ -79,6 +79,7 @@ func NewOptions(
 			attributes:        attr,
 			tenantHeader:      endpoint.TenantHeader,
 			otherHeaders:      otherHeaders,
+			apiToken:          endpoint.ApiToken,
 			downsampleOptions: downsampleOptions,
 		})
 	}
