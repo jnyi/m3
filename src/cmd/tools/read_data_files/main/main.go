@@ -86,6 +86,12 @@ func main() {
 	}
 	log := rawLogger.Sugar()
 
+	filterIds := strings.Split(*idFilter, ",")
+	filterIdSets := make(map[string]bool)
+	for _, filterId := range filterIds {
+		filterIdSets[filterId] = true
+	}
+
 	if *optPathPrefix == "" ||
 		*optNamespace == "" ||
 		*optShard < allShards ||
@@ -180,7 +186,17 @@ func main() {
 				data = entry.Data
 			)
 
-			if *idFilter != "" && !strings.Contains(id.String(), *idFilter) {
+			var filterMatches bool = false
+			var matchedId string = ""
+			for _, filterId := range filterIds {
+				if strings.Contains(id.String(), filterId) {
+					filterMatches = true
+					matchedId = filterId
+					break
+				}
+			}
+
+			if *idFilter != "" && !filterMatches && matchedId == "" {
 				continue
 			}
 
