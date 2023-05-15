@@ -80,7 +80,7 @@ func TestGetMetricIDWithoutLe(t *testing.T) {
 		{
 			testName:         "test original metric id with le returns a modified id without le",
 			originalMetricID: idWithLe.Bytes(),
-			expectedMetricID: idWithoutLe.Bytes(),
+			expectedMetricID: []byte("foobark1k2"),
 			expectedLeResult: true,
 		},
 	}
