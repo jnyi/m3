@@ -27,6 +27,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -87,9 +88,11 @@ func main() {
 	log := rawLogger.Sugar()
 
 	filterIds := strings.Split(*idFilter, ",")
-	filterIdSets := make(map[string]bool)
-	for _, filterId := range filterIds {
-		filterIdSets[filterId] = true
+	filterIdRegex, err := regexp.Compile(strings.Join(filterIds, "|"))
+
+	if err != nil {
+		fmt.Printf("Error compiling regular expression from filter %s: %s\n", *idFilter, err)
+		return
 	}
 
 	if *optPathPrefix == "" ||
@@ -186,17 +189,7 @@ func main() {
 				data = entry.Data
 			)
 
-			var filterMatches bool = false
-			var matchedId string = ""
-			for _, filterId := range filterIds {
-				if strings.Contains(id.String(), filterId) {
-					filterMatches = true
-					matchedId = filterId
-					break
-				}
-			}
-
-			if *idFilter != "" && !filterMatches && matchedId == "" {
+			if *idFilter != "" && !filterIdRegex.MatchString(id.String()) {
 				continue
 			}
 
