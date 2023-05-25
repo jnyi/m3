@@ -13,7 +13,7 @@ Usage: read_data_files [-B value] [-b value] [-f value] [-n value] [-p value] [-
  -b, --block-start=value
                     Block Start Time [in nsec]
  -f, --id-filter=value
-                    ID Contains Filter (optional)
+                    ID Contains Filter (optional), could be a comma separated list to specify multiple filters")
  -n, --namespace=value
                     Namespace [e.g. metrics]
  -p, --path-prefix=value
