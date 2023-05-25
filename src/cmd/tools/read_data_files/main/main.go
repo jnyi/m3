@@ -75,7 +75,7 @@ func main() {
 		optBlockstart  = getopt.Int64Long("block-start", 'b', 0, "Block Start Time [in nsec]")
 		volume         = getopt.Int64Long("volume", 'v', 0, "Volume number")
 		fileSetTypeArg = getopt.StringLong("fileset-type", 't', flushType, fmt.Sprintf("%s|%s", flushType, snapshotType))
-		idFilter       = getopt.StringLong("id-filter", 'f', "", "ID Contains Filter (optional)")
+		idFilter       = getopt.StringLong("id-filter", 'f', "", "ID Contains Filters (optional), could be a comma separated list to specify multiple filters")
 		benchmark      = getopt.StringLong(
 			"benchmark", 'B', "series", "benchmark mode (optional), [series|datapoints]")
 	)
