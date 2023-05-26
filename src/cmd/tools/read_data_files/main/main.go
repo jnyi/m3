@@ -88,12 +88,7 @@ func main() {
 	log := rawLogger.Sugar()
 
 	filterIds := strings.Split(*idFilter, ",")
-	filterIdRegex, err := regexp.Compile(strings.Join(filterIds, "|"))
-
-	if err != nil {
-		fmt.Printf("Error compiling regular expression from filter %s: %s\n", *idFilter, err)
-		return
-	}
+	filterIdRegex := regexp.MustCompile(strings.Join(filterIds, "|"))
 
 	if *optPathPrefix == "" ||
 		*optNamespace == "" ||
