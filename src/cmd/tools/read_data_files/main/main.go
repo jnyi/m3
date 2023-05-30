@@ -156,7 +156,7 @@ func main() {
 			volumeNums = []int{int(*volume)}
 		}
 
-		for volume := range volumeNums {
+		for _, volume := range volumeNums {
 
 		openOpts := fs.DataReaderOpenOptions{
 			Identifier: fs.FileSetFileIdentifier{
@@ -171,7 +171,7 @@ func main() {
 
 		err = reader.Open(openOpts)
 		if err != nil {
-			log.Fatalf("unable to open reader for shard %v: %v", shard, err)
+			log.Fatalf("unable to open reader for shard %v and volume %v: %v, openOpts: %s", shard, volume, err, openOpts)
 		}
 
 		for {
