@@ -153,7 +153,7 @@ func main() {
 		volumeNums, err := getVolumeNumber(*optPathPrefix, *optNamespace, int(shard), strconv.FormatInt(*optBlockstart, 10))
 		if err != nil {
 			log.Errorf("Failed to get volume number from file names for shard %d, using default shard number 0", shard)
-			volumeNums = []int{0}
+			volumeNums = []int{int(*volume)}
 		}
 
 		for volume := range volumeNums {
