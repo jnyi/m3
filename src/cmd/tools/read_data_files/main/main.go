@@ -150,20 +150,18 @@ func main() {
 			start          = time.Now()
 		)
 
-		volumeNums, err := getVolumeNumber(*optPathPrefix, *optNamespace, int(shard), strconv.FormatInt(*optBlockstart, 10))
+		volumeNum, err := getVolumeNumber(*optPathPrefix, *optNamespace, int(shard), strconv.FormatInt(*optBlockstart, 10))
 		if err != nil {
 			log.Errorf("Failed to get volume number from file names for shard %d, using default shard number 0", shard)
-			volumeNums = []int{int(*volume)}
+			volumeNum = int(*volume)
 		}
-
-		for _, volume := range volumeNums {
 
 		openOpts := fs.DataReaderOpenOptions{
 			Identifier: fs.FileSetFileIdentifier{
 				Namespace:   ident.StringID(*optNamespace),
 				Shard:       shard,
 				BlockStart:  xtime.UnixNano(*optBlockstart),
-				VolumeIndex: volume,
+				VolumeIndex: volumeNum,
 			},
 			FileSetType:      fileSetType,
 			StreamingEnabled: true,
@@ -249,7 +247,6 @@ func main() {
 			// elasped_time
 			fmt.Printf("%s\n", runTime)
 		}
-		}
 	}
 
 	if err := reader.Close(); err != nil {
@@ -257,29 +254,37 @@ func main() {
 	}
 }
 
-func getVolumeNumber(pathPrefix string, namespace string, shard int, blockStart string) ([]int, error) {
+func getVolumeNumber(pathPrefix string, namespace string, shard int, blockStart string) (int, error) {
 	nsID := ident.StringID(namespace)
 	path := fs.NamespaceDataDirPath(pathPrefix, nsID)
 	files, err := ioutil.ReadDir(path + "/" + strconv.Itoa(shard))
 	if err != nil {
-		return nil, fmt.Errorf("failed reading data directory: %w", err)
+		return 0, fmt.Errorf("failed reading data directory: %w", err)
 	}
 
 	volumeSet := make(map[int]struct{})
+	maxVolumeNum := 0
 	for _, f := range files {
 		if f.IsDir() {
 			continue
 		}
 		splittedFileName := strings.Split(f.Name(), "-")
-		if splittedFileName[1] == blockStart {
-			volumeNum, err := strconv.Atoi(splittedFileName[2])
-			if err != nil {
-				fmt.Errorf("failed parsing volume directory: %w", err)
-			} else {
-				volumeSet[volumeNum] = struct{}{}
-			}
+		if len(splittedFileName) != fs.MaxDelimNum {
+			fmt.Errorf("failed parsing volume number from file name: %s, not enough segments", f.Name())
 		} else {
-			continue
+			if splittedFileName[1] == blockStart {
+				volumeNum, err := strconv.Atoi(splittedFileName[2])
+				if err != nil {
+					fmt.Errorf("failed parsing volume directory: %w", err)
+				} else {
+					volumeSet[volumeNum] = struct{}{}
+					if volumeNum > maxVolumeNum {
+						maxVolumeNum = volumeNum
+					}
+				}
+			} else {
+				continue
+			}
 		}
 	}
 
@@ -287,7 +292,7 @@ func getVolumeNumber(pathPrefix string, namespace string, shard int, blockStart 
 	for volume := range volumeSet {
 		volumeNums = append(volumeNums, volume)
 	}
-	return volumeNums, nil
+	return maxVolumeNum, nil
 }
 
 func getShards(pathPrefix string, fileSetType persist.FileSetType, namespace string) ([]uint32, error) {
