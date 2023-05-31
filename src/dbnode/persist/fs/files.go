@@ -61,7 +61,7 @@ const (
 
 	// The maximum number of delimeters ('-' or '.') that is expected in a
 	// (base) filename.
-	maxDelimNum = 4
+	MaxDelimNum = 4
 
 	// The volume index assigned to (legacy) filesets that don't have a volume
 	// number in their filename.
@@ -417,9 +417,9 @@ func (a commitlogsByTimeAndIndexAscending) Less(i, j int) bool {
 // optimized for speed and lack of allocations, since allocation-heavy filename
 // parsing can quickly become a large source of allocations in the entire
 // system, especially when namespaces with long retentions are configured.
-func delimiterPositions(baseFilename string) ([maxDelimNum]int, int) {
+func delimiterPositions(baseFilename string) ([MaxDelimNum]int, int) {
 	var (
-		delimPos    [maxDelimNum]int
+		delimPos    [MaxDelimNum]int
 		delimsFound int
 	)
 
@@ -445,7 +445,7 @@ func delimiterPositions(baseFilename string) ([maxDelimNum]int, int) {
 func intComponentAtIndex(
 	baseFilename string,
 	componentPos int,
-	delimPos [maxDelimNum]int,
+	delimPos [MaxDelimNum]int,
 ) (xtime.UnixNano, error) {
 	start := 0
 	if componentPos > 0 {

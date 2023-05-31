@@ -154,12 +154,18 @@ func main() {
 			start          = time.Now()
 		)
 
+		volumeNum, err := getVolumeNumber(*optPathPrefix, *optNamespace, int(shard), strconv.FormatInt(*optBlockstart, 10))
+		if err != nil {
+			log.Errorf("Failed to get volume number from file names for shard %d, using volume number %d from command line", shard, *volume)
+			volumeNum = int(*volume)
+		}
+
 		openOpts := fs.DataReaderOpenOptions{
 			Identifier: fs.FileSetFileIdentifier{
 				Namespace:   ident.StringID(*optNamespace),
 				Shard:       shard,
 				BlockStart:  xtime.UnixNano(*optBlockstart),
-				VolumeIndex: int(*volume),
+				VolumeIndex: volumeNum,
 			},
 			FileSetType:      fileSetType,
 			StreamingEnabled: true,
@@ -167,7 +173,7 @@ func main() {
 
 		err = reader.Open(openOpts)
 		if err != nil {
-			log.Fatalf("unable to open reader for shard %v: %v", shard, err)
+			log.Fatalf("unable to open reader for shard %v and volume %v: %v, openOpts: %s", shard, volume, err, openOpts)
 		}
 
 		for {
@@ -252,6 +258,41 @@ func main() {
 	}
 }
 
+func getVolumeNumber(pathPrefix string, namespace string, shard int, blockStart string) (int, error) {
+	nsID := ident.StringID(namespace)
+	path := fs.NamespaceDataDirPath(pathPrefix, nsID)
+	files, err := ioutil.ReadDir(path + "/" + strconv.Itoa(shard))
+	if err != nil {
+		return 0, fmt.Errorf("failed reading data directory: %w", err)
+	}
+
+	maxVolumeNum := 0
+	for _, f := range files {
+		if f.IsDir() {
+			continue
+		}
+		splittedFileName := strings.Split(f.Name(), "-")
+		if len(splittedFileName) != fs.MaxDelimNum {
+			fmt.Errorf("failed parsing volume number from file name: %s, not enough segments", f.Name())
+		} else {
+			if splittedFileName[1] == blockStart {
+				volumeNum, err := strconv.Atoi(splittedFileName[2])
+				if err != nil {
+					fmt.Errorf("failed parsing volume directory: %w", err)
+				} else {
+					if volumeNum > maxVolumeNum {
+						maxVolumeNum = volumeNum
+					}
+				}
+			} else {
+				continue
+			}
+		}
+	}
+
+	return maxVolumeNum, nil
+}
+
 func getShards(pathPrefix string, fileSetType persist.FileSetType, namespace string) ([]uint32, error) {
 	nsID := ident.StringID(namespace)
 	path := fs.NamespaceDataDirPath(pathPrefix, nsID)
@@ -259,6 +300,7 @@ func getShards(pathPrefix string, fileSetType persist.FileSetType, namespace str
 		path = fs.NamespaceSnapshotsDirPath(pathPrefix, nsID)
 	}
 
+	// fmt.Printf("path: %s\n", path)
 	files, err := ioutil.ReadDir(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed reading namespace directory: %w", err)
@@ -266,6 +308,7 @@ func getShards(pathPrefix string, fileSetType persist.FileSetType, namespace str
 
 	shards := make([]uint32, 0)
 	for _, f := range files {
+		// fmt.Printf("file: %s\n", f.Name())
 		if !f.IsDir() {
 			continue
 		}
