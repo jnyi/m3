@@ -152,7 +152,7 @@ func main() {
 
 		volumeNum, err := getVolumeNumber(*optPathPrefix, *optNamespace, int(shard), strconv.FormatInt(*optBlockstart, 10))
 		if err != nil {
-			log.Errorf("Failed to get volume number from file names for shard %d, using default shard number 0", shard)
+			log.Errorf("Failed to get volume number from file names for shard %d, using volume number %d from command line", shard, *volume)
 			volumeNum = int(*volume)
 		}
 
@@ -262,7 +262,6 @@ func getVolumeNumber(pathPrefix string, namespace string, shard int, blockStart 
 		return 0, fmt.Errorf("failed reading data directory: %w", err)
 	}
 
-	volumeSet := make(map[int]struct{})
 	maxVolumeNum := 0
 	for _, f := range files {
 		if f.IsDir() {
@@ -277,7 +276,6 @@ func getVolumeNumber(pathPrefix string, namespace string, shard int, blockStart 
 				if err != nil {
 					fmt.Errorf("failed parsing volume directory: %w", err)
 				} else {
-					volumeSet[volumeNum] = struct{}{}
 					if volumeNum > maxVolumeNum {
 						maxVolumeNum = volumeNum
 					}
@@ -288,10 +286,6 @@ func getVolumeNumber(pathPrefix string, namespace string, shard int, blockStart 
 		}
 	}
 
-	volumeNums := make([]int, 0, len(volumeSet))
-	for volume := range volumeSet {
-		volumeNums = append(volumeNums, volume)
-	}
 	return maxVolumeNum, nil
 }
 
