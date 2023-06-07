@@ -279,16 +279,18 @@ func (agg *aggregator) AddTimedWithStagedMetadatas(
 	shardingId, isHistogram := parsers.GetMetricIDWithoutLe(metric.ID)
 	shard, err := agg.shardFor(shardingId)
 
+	if err != nil {
+		agg.metrics.addTimed.ReportError(err, agg.electionManager.ElectionState(), agg.logger)
+		return err
+	}
+
 	if isHistogram {
 		agg.metrics.histogramSupportScope.Tagged(map[string]string{
 			"shard": fmt.Sprintf("%d", shard.shard),
 		}).Counter("shardCounter").Inc(1)
 		agg.logger.Debug("forwarding histogram metric from aggregator to aggregator shard", zap.Uint32("shardId", shard.shard), zap.ByteString("metricId", metric.ID))
 	}
-	if err != nil {
-		agg.metrics.addTimed.ReportError(err, agg.electionManager.ElectionState(), agg.logger)
-		return err
-	}
+
 	if err = shard.AddTimedWithStagedMetadatas(metric, metas); err != nil {
 		agg.metrics.addTimed.ReportError(err, agg.electionManager.ElectionState(), agg.logger)
 		return err
@@ -317,16 +319,18 @@ func (agg *aggregator) AddForwarded(
 	shardingId, isHistogram := parsers.GetMetricIDWithoutLe(metric.ID)
 	shard, err := agg.shardFor(shardingId)
 
+	if err != nil {
+		agg.metrics.addForwarded.ReportError(err, agg.electionManager.ElectionState(), agg.logger)
+		return err
+	}
+
 	if isHistogram {
 		agg.metrics.histogramSupportScope.Tagged(map[string]string{
 			"shard": fmt.Sprintf("%d", shard.shard),
 		}).Counter("shardCounter").Inc(1)
 		agg.logger.Debug("forwarding histogram metric from aggregator to aggregator shard", zap.Uint32("shardId", shard.shard), zap.ByteString("metricId", metric.ID))
 	}
-	if err != nil {
-		agg.metrics.addForwarded.ReportError(err, agg.electionManager.ElectionState(), agg.logger)
-		return err
-	}
+
 	if err = shard.AddForwarded(metric, metadata); err != nil {
 		agg.metrics.addForwarded.ReportError(err, agg.electionManager.ElectionState(), agg.logger)
 		return err
