@@ -49,6 +49,7 @@ type M3MsgClient struct {
 	nowFn   clock.NowFn
 	shardFn sharding.ShardFn
 	metrics m3msgClientMetrics
+	logger  *zap.Logger
 }
 
 type m3msgClient struct {
@@ -91,6 +92,7 @@ func NewM3MsgClient(opts Options) (Client, error) {
 		nowFn:   opts.ClockOptions().NowFn(),
 		shardFn: opts.ShardFn(),
 		metrics: newM3msgClientMetrics(iOpts.MetricsScope(), iOpts.TimerOptions()),
+		logger:  logger,
 	}, nil
 }
 
@@ -227,8 +229,14 @@ func (c *M3MsgClient) WriteForwarded(
 
 //nolint:gocritic
 func (c *M3MsgClient) write(metricID id.RawID, payload payloadUnion) error {
-	shardingId, _ := parsers.GetMetricIDWithoutLe(metricID)
+	shardingId, isHistogram := parsers.GetMetricIDWithoutLe(metricID)
 	shard := c.shardFn(shardingId, c.m3msg.numShards)
+	if isHistogram {
+		c.metrics.histogramSupportScope.Tagged(map[string]string{
+			"shard": fmt.Sprintf("%d", shard),
+		}).Counter("shardCounter").Inc(1)
+		c.logger.Debug("forwarding histogram metric from coordinator to aggregator shard", zap.Uint32("shardId", shard), zap.ByteString("metricId", metricID))
+	}
 
 	msg := c.m3msg.messagePool.Get()
 	if err := msg.Encode(shard, payload); err != nil {
@@ -261,18 +269,23 @@ type m3msgClientMetrics struct {
 	writeUntimedGauge      instrument.MethodMetrics
 	writePassthrough       instrument.MethodMetrics
 	writeForwarded         instrument.MethodMetrics
+
+	histogramSupportScope tally.Scope
 }
 
 func newM3msgClientMetrics(
 	scope tally.Scope,
 	opts instrument.TimerOptions,
 ) m3msgClientMetrics {
+	histogramSupportScope := scope.SubScope("histogram")
 	return m3msgClientMetrics{
 		writeUntimedCounter:    instrument.NewMethodMetrics(scope, "writeUntimedCounter", opts),
 		writeUntimedBatchTimer: instrument.NewMethodMetrics(scope, "writeUntimedBatchTimer", opts),
 		writeUntimedGauge:      instrument.NewMethodMetrics(scope, "writeUntimedGauge", opts),
 		writePassthrough:       instrument.NewMethodMetrics(scope, "writePassthrough", opts),
 		writeForwarded:         instrument.NewMethodMetrics(scope, "writeForwarded", opts),
+
+		histogramSupportScope: histogramSupportScope,
 	}
 }
 
