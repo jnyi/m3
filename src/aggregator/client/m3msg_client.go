@@ -38,7 +38,6 @@ import (
 	"github.com/m3db/m3/src/msg/producer"
 	"github.com/m3db/m3/src/x/clock"
 	"github.com/m3db/m3/src/x/instrument"
-	"github.com/m3db/m3/src/x/parsers"
 )
 
 var _ AdminClient = (*M3MsgClient)(nil)
@@ -227,8 +226,7 @@ func (c *M3MsgClient) WriteForwarded(
 
 //nolint:gocritic
 func (c *M3MsgClient) write(metricID id.RawID, payload payloadUnion) error {
-	shardingId, _ := parsers.GetMetricIDWithoutLe(metricID)
-	shard := c.shardFn(shardingId, c.m3msg.numShards)
+	shard := c.shardFn(metricID, c.m3msg.numShards)
 
 	msg := c.m3msg.messagePool.Get()
 	if err := msg.Encode(shard, payload); err != nil {
