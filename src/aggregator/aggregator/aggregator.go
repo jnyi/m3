@@ -47,7 +47,6 @@ import (
 	"github.com/uber-go/tally"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
-	"github.com/m3db/m3/src/x/parsers"
 )
 
 const (
@@ -275,8 +274,7 @@ func (agg *aggregator) AddTimedWithStagedMetadatas(
 	sw := agg.metrics.addTimed.SuccessLatencyStopwatch()
 	agg.updateStagedMetadatas(metas)
 	agg.metrics.timed.Inc(1)
-	shardingId, _ := parsers.GetMetricIDWithoutLe(metric.ID)
-	shard, err := agg.shardFor(shardingId)
+	shard, err := agg.shardFor(metric.ID)
 	if err != nil {
 		agg.metrics.addTimed.ReportError(err, agg.electionManager.ElectionState(), agg.logger)
 		return err
@@ -306,8 +304,7 @@ func (agg *aggregator) AddForwarded(
 ) error {
 	sw := agg.metrics.addForwarded.SuccessLatencyStopwatch()
 	agg.metrics.forwarded.Inc(1)
-	shardingId, _ := parsers.GetMetricIDWithoutLe(metric.ID)
-	shard, err := agg.shardFor(shardingId)
+	shard, err := agg.shardFor(metric.ID)
 	if err != nil {
 		agg.metrics.addForwarded.ReportError(err, agg.electionManager.ElectionState(), agg.logger)
 		return err
