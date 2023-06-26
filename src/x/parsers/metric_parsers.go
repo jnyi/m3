@@ -25,27 +25,32 @@ func GetMetricIDForHistogramAgg(metricID id.RawID) (id.RawID, bool) {
 	for it.Next() {
 		tagName, tagValue := it.Current()
 
-		if !bytes.Equal(tagName, leTagName) {
-			if bytes.Equal(tagName, nameTagName) {
-				// if the __name__ contains a histogram suffix, then we strip the suffix
-				isHistogram = true
-				switch {
-				case bytes.HasSuffix(tagValue, bucketSuffix):
-					tagValue = tagValue[:len(tagValue)-len(bucketSuffix)]
-				case bytes.HasSuffix(tagValue, countSuffix):
-					tagValue = tagValue[:len(tagValue)-len(countSuffix)]
-				case bytes.HasSuffix(tagValue, sumSuffix):
-					tagValue = tagValue[:len(tagValue)-len(sumSuffix)]
-				default:
-					isHistogram = false
-				}
+		if bytes.Equal(tagName, nameTagName) {
+			// if the __name__ contains a histogram suffix, then we strip the suffix
+			isHistogram = true
+			switch {
+			case bytes.HasSuffix(tagValue, bucketSuffix):
+				tagValue = tagValue[:len(tagValue)-len(bucketSuffix)]
+			case bytes.HasSuffix(tagValue, countSuffix):
+				tagValue = tagValue[:len(tagValue)-len(countSuffix)]
+			case bytes.HasSuffix(tagValue, sumSuffix):
+				tagValue = tagValue[:len(tagValue)-len(sumSuffix)]
+			default:
+				isHistogram = false
 			}
 
-			idForHistogramAgg = append(idForHistogramAgg, tagName...)
-			idForHistogramAgg = append(idForHistogramAgg, tagValue...)
-		} else {
+			if !isHistogram {
+				// if the __name__ does not contain a histogram suffix, then return original metricID
+				// since the metric is not a histogram
+				return metricID, false
+			}
+		} else if bytes.Equal(tagName, leTagName) {
 			isHistogram = true
+			continue
 		}
+
+		idForHistogramAgg = append(idForHistogramAgg, tagName...)
+		idForHistogramAgg = append(idForHistogramAgg, tagValue...)
 	}
 	return idForHistogramAgg, isHistogram
 }
