@@ -87,6 +87,39 @@ func TestPromWriteParsing(t *testing.T) {
 	require.Equal(t, ingest.WriteOptions{}, r.Options)
 }
 
+func TestPromWriteParsingRejectOldSamples(t *testing.T) {
+	ctrl := xtest.NewController(t)
+	defer ctrl.Finish()
+
+	mockDownsamplerAndWriter := ingest.NewMockDownsamplerAndWriter(ctrl)
+	handlerOpts := options.EmptyHandlerOptions().
+		SetNowFn(func() time.Time { return time.Now().Add(-1000) }).
+		SetDownsamplerAndWriter(mockDownsamplerAndWriter).
+		SetTagOptions(models.NewTagOptions()).
+		SetConfig(config.Configuration{
+			WriteForwarding: config.WriteForwardingConfiguration{
+				PromRemoteWrite: handleroptions.PromWriteHandlerForwardingOptions{},
+			},
+			RemoteWrite: config.RemoteWriteConfiguration{
+				RejectOldSamples:  true,
+				RejectDuration:    time.Duration(1),
+				ErrorSamplingRate: 1.0,
+			},
+		}).
+		SetStoreMetricsType(true)
+	handler, err := NewPromWriteHandler(handlerOpts)
+	require.NoError(t, err)
+
+	promReq := test.GeneratePromWriteRequest()
+	promReqBody := test.GeneratePromWriteRequestBody(t, promReq)
+	req := httptest.NewRequest(PromWriteHTTPMethod, PromWriteURL, promReqBody)
+
+	r, err := handler.(*PromWriteHandler).parseRequest(req)
+	require.Nil(t, err, "unable to parse request")
+	require.Equal(t, len(r.Request.Timeseries), 0)
+	require.Equal(t, ingest.WriteOptions{}, r.Options)
+}
+
 func TestPromWrite(t *testing.T) {
 	ctrl := xtest.NewController(t)
 	defer ctrl.Finish()
