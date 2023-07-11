@@ -185,6 +185,9 @@ type Configuration struct {
 	// Middleware is middleware-specific configuration.
 	Middleware MiddlewareConfiguration `yaml:"middleware"`
 
+	// Remote Write Config tells how to deal with incoming prometheus remote write requests
+	RemoteWrite RemoteWriteConfiguration `yaml:"remoteWrite"`
+
 	// Query is the query configuration.
 	Query QueryConfiguration `yaml:"query"`
 
@@ -280,6 +283,17 @@ type ResultOptions struct {
 	// KeepNaNs keeps NaNs before returning query results.
 	// The default is false, which matches Prometheus
 	KeepNaNs bool `yaml:"keepNans"`
+}
+
+// RemoteWriteConfiguration deals with incoming metrics samples from remote write requests
+type RemoteWriteConfiguration struct {
+	// If RejectOldSamples is true then m3 coordinator will reject samples directly from remote write requests
+	// It will silently drop old samples without notifying client for retries or report error codes
+	RejectOldSamples bool `yaml:"rejectOldSamples"`
+	// RejectDuration will drop any samples with timestamp t < now - reject_duration
+	RejectDuration time.Duration `yaml:"rejectDuration"`
+	// The sampling rate for error logs
+	ErrorSamplingRate float32 `yaml:"errorSamplingRate" validate:"min=0.0, max=1.0"`
 }
 
 // QueryConfiguration is the query configuration.

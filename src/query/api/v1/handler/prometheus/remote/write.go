@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"math/rand"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -57,6 +58,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/uber-go/tally"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 const (
@@ -96,6 +98,8 @@ var (
 		Jitter:         &defaultForwardingRetryJitter,
 	}
 
+	defaultAttribution = make([]*promAttributionMetrics, 0)
+
 	defaultValue = ingest.IterValue{
 		Tags:       models.EmptyTags(),
 		Attributes: ts.DefaultSeriesAttributes(),
@@ -113,6 +117,25 @@ var (
 	}
 )
 
+type PromLabels struct {
+	lbls []prompb.Label
+}
+
+func (p PromLabels) MarshalLogArray(encoder zapcore.ArrayEncoder) error {
+	for _, label := range p.lbls {
+		encoder.AppendString(fmt.Sprintf("%s=%s,", label.Name, label.Value))
+	}
+	return nil
+}
+
+// this option is used to deal with incoming remote write requests
+// it is a reflection of RemoteWriteConfiguration
+type remoteWriteOpts struct {
+	rejectOldSamples  bool
+	rejectDuration    time.Duration
+	errorSamplingRate float32
+}
+
 // PromWriteHandler represents a handler for prometheus write endpoint.
 type PromWriteHandler struct {
 	downsamplerAndWriter   ingest.DownsamplerAndWriter
@@ -128,6 +151,7 @@ type PromWriteHandler struct {
 	instrumentOpts         instrument.Options
 	metrics                promWriteMetrics
 	attributions           []*promAttributionMetrics
+	remoteWriteOpts        remoteWriteOpts
 
 	// Counting the number of times of "literal is too long" error for log sampling purposes.
 	numLiteralIsTooLong uint32
@@ -164,10 +188,23 @@ func NewPromWriteHandler(options options.HandlerOptions) (http.Handler, error) {
 		return nil, err
 	}
 
-	attributions := make([]*promAttributionMetrics, len(options.Config().Metrics.Attributions))
-	for i, attributionOpts := range options.Config().Metrics.Attributions {
-		attribution, _ := newPromAttributionMetrics(scope, attributionOpts, logger)
-		attributions[i] = attribution
+	remoteWriteOpts := remoteWriteOpts{
+		rejectOldSamples:  options.Config().RemoteWrite.RejectOldSamples,
+		rejectDuration:    options.Config().RemoteWrite.RejectDuration,
+		errorSamplingRate: options.Config().RemoteWrite.ErrorSamplingRate,
+	}
+	logger.Info("set up remote write options",
+		zap.Bool("reject old samples", remoteWriteOpts.rejectOldSamples),
+		zap.Duration("reject duration", remoteWriteOpts.rejectDuration),
+	)
+
+	attributions := defaultAttribution
+	if options.Config().Metrics != nil && options.Config().Metrics.Attributions != nil {
+		attributions := make([]*promAttributionMetrics, len(options.Config().Metrics.Attributions))
+		for i, attributionOpts := range options.Config().Metrics.Attributions {
+			attribution, _ := newPromAttributionMetrics(scope, attributionOpts, logger)
+			attributions[i] = attribution
+		}
 	}
 
 	// Only use a forwarding worker pool if concurrency is bound, otherwise
@@ -215,11 +252,13 @@ func NewPromWriteHandler(options options.HandlerOptions) (http.Handler, error) {
 		metrics:                metrics,
 		attributions:           attributions,
 		instrumentOpts:         instrumentOpts,
+		remoteWriteOpts:        remoteWriteOpts,
 	}, nil
 }
 
 type promWriteMetrics struct {
 	writeSuccess             tally.Counter
+	writeRejectTooOld        tally.Counter
 	writeErrorsServer        tally.Counter
 	writeErrorsClient        tally.Counter
 	writeBatchLatency        tally.Histogram
@@ -247,6 +286,7 @@ func newPromWriteMetrics(scope tally.Scope) (promWriteMetrics, error) {
 	}
 	return promWriteMetrics{
 		writeSuccess:             scope.SubScope("write").Counter("success"),
+		writeRejectTooOld:        scope.SubScope("write").Counter("reject"),
 		writeErrorsServer:        scope.SubScope("write").Tagged(map[string]string{"code": "5XX"}).Counter("errors"),
 		writeErrorsClient:        scope.SubScope("write").Tagged(map[string]string{"code": "4XX"}).Counter("errors"),
 		writeBatchLatency:        scope.SubScope("write").Histogram("batch-latency", buckets.WriteLatencyBuckets),
@@ -515,6 +555,36 @@ func (h *PromWriteHandler) parseRequest(
 		for i := range req.Timeseries {
 			req.Timeseries[i].Type = tp
 		}
+	}
+
+	if h.remoteWriteOpts.rejectOldSamples {
+		now := h.nowFn()
+		thresholdTime := now.Add(-h.remoteWriteOpts.rejectDuration)
+		// The two for loops do the trick of not allocating new memory and do in place drops
+		i := 0
+		for _, ts := range req.Timeseries {
+			j := 0
+			var t int64
+			for _, s := range ts.Samples {
+				t = s.Timestamp
+				if time.UnixMilli(s.Timestamp).After(thresholdTime) {
+					// preserve samples that are new by reusing the same memory
+					ts.Samples[j] = s
+					j++
+				}
+			}
+			h.metrics.writeRejectTooOld.Inc(int64(len(ts.Samples) - j))
+			if j > 0 {
+				ts.Samples = ts.Samples[:j]
+				req.Timeseries[i] = ts
+				i++
+			} else if rand.Float32() < h.remoteWriteOpts.errorSamplingRate {
+				h.instrumentOpts.Logger().Error("reject old samples",
+					zap.Array("labels", PromLabels{lbls: ts.Labels}), zap.Time("now", now),
+					zap.Time("sample timestamp", time.UnixMilli(t)))
+			}
+		}
+		req.Timeseries = req.Timeseries[:i]
 	}
 
 	// Check if any of the labels exceed literal length limits and occasionally print them
