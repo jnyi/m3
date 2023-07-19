@@ -65,7 +65,7 @@ func TestAllowNone(t *testing.T) {
 	assert.False(t, AllowNone(q, multi))
 }
 
-func TestReadOptimizedFilter(t *testing.T) {
+func TestReadOptimizedFilterWithEqual(t *testing.T) {
 	fetchQueryToOregionDev := storage.FetchQuery{
 		TagMatchers: models.Matchers{
 			models.Matcher{
@@ -74,8 +74,8 @@ func TestReadOptimizedFilter(t *testing.T) {
 				Value: []byte("oregon-dev"),
 			},
 			models.Matcher{
-				Type:  models.MatchRegexp,
-				Name:  []byte(storageNameLabelKey),
+				Type:  models.MatchEqual,
+				Name:  []byte("some-other-label"),
 				Value: []byte("something-else"),
 			},
 		},
@@ -85,12 +85,38 @@ func TestReadOptimizedFilter(t *testing.T) {
 		assert.True(t, ReadOptimizedFilter(&fetchQueryToOregionDev, store))
 	}
 	{
-		store := mock.NewMockStorageWithName("query-endpoint-aws-oregon-dev")
+		store := mock.NewMockStorageWithName(remoteStorePrefix+"dev-aws-oregon-dev")
 		assert.True(t, ReadOptimizedFilter(&fetchQueryToOregionDev, store))
 	}
 	{
-		store := mock.NewMockStorageWithName("query-endpoint-aws-us-east-1-dev")
+		store := mock.NewMockStorageWithName(remoteStorePrefix+"dev-aws-us-east-1")
 		assert.False(t, ReadOptimizedFilter(&fetchQueryToOregionDev, store))
+	}
+	fetchQueryToOregionDev = storage.FetchQuery{
+		TagMatchers: models.Matchers{
+			models.Matcher{
+				Type:  models.MatchNotEqual,
+				Name:  []byte(storageNameLabelKey),
+				Value: []byte("oregon-dev"),
+			},
+			models.Matcher{
+				Type:  models.MatchEqual,
+				Name:  []byte("some-other-label"),
+				Value: []byte("something-else"),
+			},
+		},
+	}
+	{
+		store := mock.NewMockStorageWithName(localStorageName)
+		assert.True(t, ReadOptimizedFilter(&fetchQueryToOregionDev, store))
+	}
+	{
+		store := mock.NewMockStorageWithName(remoteStorePrefix+"dev-aws-oregon-dev")
+		assert.False(t, ReadOptimizedFilter(&fetchQueryToOregionDev, store))
+	}
+	{
+		store := mock.NewMockStorageWithName(remoteStorePrefix+"dev-aws-us-east-1")
+		assert.True(t, ReadOptimizedFilter(&fetchQueryToOregionDev, store))
 	}
 }
 
@@ -100,7 +126,7 @@ func TestReadOptimizedFilterWithRegex(t *testing.T) {
 			models.Matcher{
 				Type:  models.MatchRegexp,
 				Name:  []byte(storageNameLabelKey),
-				Value: []byte("suffix-a|suffix-b|suffix-c"),
+				Value: []byte("shard-a|shard-b-bb-bbb|shard-c-ccc-d"),
 			},
 			models.Matcher{
 				Type:  models.MatchRegexp,
@@ -114,36 +140,116 @@ func TestReadOptimizedFilterWithRegex(t *testing.T) {
 		assert.True(t, ReadOptimizedFilter(&fetchQuery, store))
 	}
 	{
-		store := mock.NewMockStorageWithName("query-endpoint-suffix-a")
+		store := mock.NewMockStorageWithName(remoteStorePrefix+"prod-aws-shard-a")
 		assert.True(t, ReadOptimizedFilter(&fetchQuery, store))
 	}
 	{
-		store := mock.NewMockStorageWithName("query-endpoint-suffix-b")
+		store := mock.NewMockStorageWithName(remoteStorePrefix+"prod-aws-shard-b-bb-bbb")
 		assert.True(t, ReadOptimizedFilter(&fetchQuery, store))
 	}
 	{
-		store := mock.NewMockStorageWithName("query-endpoint-suffix-c")
+		store := mock.NewMockStorageWithName(remoteStorePrefix+"prod-aws-shard-c-ccc-d")
 		assert.True(t, ReadOptimizedFilter(&fetchQuery, store))
 	}
-	{
-		store := mock.NewMockStorageWithName("query-endpoint-suffix-d")
-		assert.False(t, ReadOptimizedFilter(&fetchQuery, store))
-	}
-	{
-		store := mock.NewMockStorageWithName("query-endpoint-suffix")
-		assert.False(t, ReadOptimizedFilter(&fetchQuery, store))
-	}
+
 	fetchQuery = storage.FetchQuery{
 		TagMatchers: models.Matchers{
 			models.Matcher{
-				Type:  models.MatchRegexp,
+				Type:  models.MatchNotRegexp,
 				Name:  []byte(storageNameLabelKey),
+				Value: []byte("shard-a|shard-b-bb-bbb|shard-c-ccc-d"),
+			},
+			models.Matcher{
+				Type:  models.MatchRegexp,
+				Name:  []byte("some-other-label"),
 				Value: []byte("suffix-d"),
 			},
 		},
 	}
 	{
-		store := mock.NewMockStorageWithName("query-endpoint-suffix-d")
+		store := mock.NewMockStorageWithName(localStorageName)
+		assert.True(t, ReadOptimizedFilter(&fetchQuery, store))
+	}
+	{
+		store := mock.NewMockStorageWithName(remoteStorePrefix+"prod-aws-shard-a")
+		assert.False(t, ReadOptimizedFilter(&fetchQuery, store))
+	}
+	{
+		store := mock.NewMockStorageWithName(remoteStorePrefix+"prod-aws-shard-b-bb-bbb")
+		assert.False(t, ReadOptimizedFilter(&fetchQuery, store))
+	}
+	{
+		store := mock.NewMockStorageWithName(remoteStorePrefix+"prod-aws-shard-c-ccc-d")
+		assert.False(t, ReadOptimizedFilter(&fetchQuery, store))
+	}
+
+	fetchQuery = storage.FetchQuery{
+		TagMatchers: models.Matchers{
+			models.Matcher{
+				Type:  models.MatchRegexp,
+				Name:  []byte(storageNameLabelKey),
+				Value: []byte("shard-a|shard-a-.*"),
+			},
+			models.Matcher{
+				Type:  models.MatchRegexp,
+				Name:  []byte("some-other-label"),
+				Value: []byte("suffix-d"),
+			},
+		},
+	}
+	{
+		store := mock.NewMockStorageWithName(localStorageName)
+		assert.True(t, ReadOptimizedFilter(&fetchQuery, store))
+	}
+	{
+		store := mock.NewMockStorageWithName(remoteStorePrefix+"prod-aws-shard-a")
+		assert.True(t, ReadOptimizedFilter(&fetchQuery, store))
+	}
+	{
+		store := mock.NewMockStorageWithName(remoteStorePrefix+"prod-aws-shard-aa")
+		assert.False(t, ReadOptimizedFilter(&fetchQuery, store))
+	}
+	{
+		store := mock.NewMockStorageWithName(remoteStorePrefix+"prod-aws-shard-a-")
+		assert.True(t, ReadOptimizedFilter(&fetchQuery, store))
+	}
+	{
+		store := mock.NewMockStorageWithName(remoteStorePrefix+"prod-aws-shard-a-aa")
+		assert.True(t, ReadOptimizedFilter(&fetchQuery, store))
+	}
+
+	fetchQuery = storage.FetchQuery{
+		TagMatchers: models.Matchers{
+			models.Matcher{
+				Type:  models.MatchRegexp,
+				Name:  []byte(storageNameLabelKey),
+				Value: []byte(".*"),
+			},
+			models.Matcher{
+				Type:  models.MatchRegexp,
+				Name:  []byte("some-other-label"),
+				Value: []byte("suffix-d"),
+			},
+		},
+	}
+	{
+		store := mock.NewMockStorageWithName(localStorageName)
+		assert.True(t, ReadOptimizedFilter(&fetchQuery, store))
+	}
+	{
+		store := mock.NewMockStorageWithName(remoteStorePrefix+"prod-aws-shard-a")
+		assert.True(t, ReadOptimizedFilter(&fetchQuery, store))
+	}
+	{
+		store := mock.NewMockStorageWithName(remoteStorePrefix+"prod-aws-shard-aa")
+		assert.True(t, ReadOptimizedFilter(&fetchQuery, store))
+	}
+	{
+		store := mock.NewMockStorageWithName(remoteStorePrefix+"prod-aws-shard-a-")
+		assert.True(t, ReadOptimizedFilter(&fetchQuery, store))
+	}
+	{
+		store := mock.NewMockStorageWithName(remoteStorePrefix+"prod-aws-shard-a-aa")
 		assert.True(t, ReadOptimizedFilter(&fetchQuery, store))
 	}
 }
