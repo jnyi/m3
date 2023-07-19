@@ -21,6 +21,7 @@
 package filter
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/m3db/m3/src/query/models"
@@ -30,6 +31,7 @@ const (
 	// NB: This is specific to Databricks!
 	storageNameLabelKey = "shardName"
 	localStorageName = "local_store"
+	remoteStorePrefix = "remote_store_"
 )
 // Storage determines whether storage can fulfil the query
 type Storage func(query storage.Query, store storage.Storage) bool
@@ -64,22 +66,41 @@ func ReadOptimizedFilter(query storage.Query, store storage.Storage) bool {
 		// This filter only applies to fetch queries. The configration is wrong!
 		return true
 	}	
+	getShardName := func(storeName string) string {
+		// The format of store name is "remote_store_<env>-<cloud>-<shardName>", e.g. "remote_store_prod-aws-nvirginia-prod".
+		// "remote_store_" prefix is added by M3: https://github.com/databricks/m3/blob/8d4161053f6f951beeeb6689472c450b5c05994d/src/query/storage/remote/storage.go#L115-L116
+		// The other parts are specific to Databricks. See: https://github.com/databricks/universe/blob/master/kubernetes/config/m3/params/m3-shard-flags.jsonnet.TEMPLATE#L2837
+		if !strings.HasPrefix(storeName, remoteStorePrefix) {
+			return storeName
+		}
+		parts := strings.Split(storeName[len(remoteStorePrefix):], "-")
+		if len(parts) < 3 {
+			return storeName[len(remoteStorePrefix):]
+		}
+		return strings.Join(parts[2:], "-")
+	}
+	shardName := getShardName(store.Name())
 	for _, tagMatcher := range fetchQuery.TagMatchers {
 		if string(tagMatcher.Name) == storageNameLabelKey {
 			switch tagMatcher.Type {
-			// NB: This is a bit hacky. The storage name is like "remote_store_prod-aws-nvirginia-prod", while the tag matcher is like "shardName=nvirginia-prod".
 			case models.MatchEqual:
-				if !strings.HasSuffix(store.Name(), string(tagMatcher.Value)) {
+				if shardName != string(tagMatcher.Value) {
 					return false
 				}
 			case models.MatchRegexp:
-			    // NB: only support 'shardName=~"aaa|bbb|ccc"' for now, where "aaa", "bbb", and "ccc" are plain strings instead of regex.
-				for _, matcherValue := range strings.Split(string(tagMatcher.Value), "|") {
-					if strings.HasSuffix(store.Name(), matcherValue) {
-						return true
-					}
+				matched, err := regexp.MatchString("^(" + string(tagMatcher.Value) + ")$", shardName)
+				if err == nil && !matched {
+					return false
 				}
-				return false
+			case models.MatchNotEqual:
+				if shardName == string(tagMatcher.Value) {
+					return false
+				}
+			case models.MatchNotRegexp:
+				matched, err := regexp.MatchString("^(" + string(tagMatcher.Value) + ")$", shardName)
+				if err == nil && matched {
+					return false
+				}
 			}
 		}
 	}
