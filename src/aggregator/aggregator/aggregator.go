@@ -47,8 +47,6 @@ import (
 	"github.com/uber-go/tally"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
-	"github.com/m3db/m3/src/x/parsers"
-	"fmt"
 )
 
 const (
@@ -276,21 +274,11 @@ func (agg *aggregator) AddTimedWithStagedMetadatas(
 	sw := agg.metrics.addTimed.SuccessLatencyStopwatch()
 	agg.updateStagedMetadatas(metas)
 	agg.metrics.timed.Inc(1)
-	shardingId, isHistogram := parsers.GetMetricIDForHistogramAgg(metric.ID)
-	shard, err := agg.shardFor(shardingId)
-
+	shard, err := agg.shardFor(metric.ID)
 	if err != nil {
 		agg.metrics.addTimed.ReportError(err, agg.electionManager.ElectionState(), agg.logger)
 		return err
 	}
-
-	if isHistogram {
-		agg.metrics.histogramSupportScope.Tagged(map[string]string{
-			"shard": fmt.Sprintf("%d", shard.shard),
-		}).Counter("shardCounter").Inc(1)
-		agg.logger.Debug("forwarding histogram metric from aggregator to aggregator shard", zap.Uint32("shardId", shard.shard), zap.ByteString("metricId", metric.ID))
-	}
-
 	if err = shard.AddTimedWithStagedMetadatas(metric, metas); err != nil {
 		agg.metrics.addTimed.ReportError(err, agg.electionManager.ElectionState(), agg.logger)
 		return err
@@ -316,21 +304,11 @@ func (agg *aggregator) AddForwarded(
 ) error {
 	sw := agg.metrics.addForwarded.SuccessLatencyStopwatch()
 	agg.metrics.forwarded.Inc(1)
-	shardingId, isHistogram := parsers.GetMetricIDForHistogramAgg(metric.ID)
-	shard, err := agg.shardFor(shardingId)
-
+	shard, err := agg.shardFor(metric.ID)
 	if err != nil {
 		agg.metrics.addForwarded.ReportError(err, agg.electionManager.ElectionState(), agg.logger)
 		return err
 	}
-
-	if isHistogram {
-		agg.metrics.histogramSupportScope.Tagged(map[string]string{
-			"shard": fmt.Sprintf("%d", shard.shard),
-		}).Counter("shardCounter").Inc(1)
-		agg.logger.Debug("forwarding histogram metric from aggregator to aggregator shard", zap.Uint32("shardId", shard.shard), zap.ByteString("metricId", metric.ID))
-	}
-
 	if err = shard.AddForwarded(metric, metadata); err != nil {
 		agg.metrics.addForwarded.ReportError(err, agg.electionManager.ElectionState(), agg.logger)
 		return err
@@ -1198,8 +1176,6 @@ type aggregatorMetrics struct {
 	shards         aggregatorShardsMetrics
 	shardSetID     aggregatorShardSetIDMetrics
 	tick           aggregatorTickMetrics
-
-	histogramSupportScope tally.Scope
 }
 
 func newAggregatorMetrics(
@@ -1215,25 +1191,23 @@ func newAggregatorMetrics(
 	shardsScope := scope.SubScope("shards")
 	shardSetIDScope := scope.SubScope("shard-set-id")
 	tickScope := scope.SubScope("tick")
-	histogramSupportScope := scope.SubScope("histogram")
 	return aggregatorMetrics{
-		counters:              scope.Counter("counters"),
-		timers:                scope.Counter("timers"),
-		timerBatches:          scope.Counter("timer-batches"),
-		gauges:                scope.Counter("gauges"),
-		forwarded:             scope.Counter("forwarded"),
-		timed:                 scope.Counter("timed"),
-		passthrough:           scope.Counter("passthrough"),
-		untimedToTimed:        scope.Counter("untimed-to-timed"),
-		addUntimed:            newAggregatorAddUntimedMetrics(addUntimedScope, opts),
-		addTimed:              newAggregatorAddTimedMetrics(addTimedScope, opts),
-		addForwarded:          newAggregatorAddForwardedMetrics(addForwardedScope, opts, maxAllowedForwardingDelayFn),
-		addPassthrough:        newAggregatorAddPassthroughMetrics(addPassthroughScope, opts),
-		placement:             newAggregatorPlacementMetrics(placementScope),
-		shards:                newAggregatorShardsMetrics(shardsScope),
-		shardSetID:            newAggregatorShardSetIDMetrics(shardSetIDScope),
-		tick:                  newAggregatorTickMetrics(tickScope),
-		histogramSupportScope: histogramSupportScope,
+		counters:       scope.Counter("counters"),
+		timers:         scope.Counter("timers"),
+		timerBatches:   scope.Counter("timer-batches"),
+		gauges:         scope.Counter("gauges"),
+		forwarded:      scope.Counter("forwarded"),
+		timed:          scope.Counter("timed"),
+		passthrough:    scope.Counter("passthrough"),
+		untimedToTimed: scope.Counter("untimed-to-timed"),
+		addUntimed:     newAggregatorAddUntimedMetrics(addUntimedScope, opts),
+		addTimed:       newAggregatorAddTimedMetrics(addTimedScope, opts),
+		addForwarded:   newAggregatorAddForwardedMetrics(addForwardedScope, opts, maxAllowedForwardingDelayFn),
+		addPassthrough: newAggregatorAddPassthroughMetrics(addPassthroughScope, opts),
+		placement:      newAggregatorPlacementMetrics(placementScope),
+		shards:         newAggregatorShardsMetrics(shardsScope),
+		shardSetID:     newAggregatorShardSetIDMetrics(shardSetIDScope),
+		tick:           newAggregatorTickMetrics(tickScope),
 	}
 }
 
