@@ -22,6 +22,7 @@ package m3msg
 
 import (
 	"fmt"
+	"math/rand"
 
 	"github.com/m3db/m3/src/aggregator/aggregator"
 	"github.com/m3db/m3/src/metrics/encoding"
@@ -62,7 +63,8 @@ type messageProcessor struct {
 }
 
 func (m *messageProcessor) Process(msg consumer.Message) {
-	if err := m.handleMessage(&m.pb, &m.union, msg); err != nil {
+	if err := m.handleMessage(&m.pb, &m.union, msg); err != nil && rand.Float32() < 0.001 {
+		// this error is too verbose, down sampling it
 		m.logger.Error("could not process message",
 			zap.Error(err),
 			zap.Uint64("shard", msg.ShardID()),
