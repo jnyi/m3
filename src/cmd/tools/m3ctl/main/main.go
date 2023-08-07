@@ -24,6 +24,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/m3db/m3/src/cmd/tools/m3ctl/etcd"
 	"os"
 	"strings"
 
@@ -48,7 +49,7 @@ const (
 // so the output can be completely JSON.
 // - Do not print log stack traces so errors aren't overwhelming output.
 var defaultLoggerOptions = loggerOptions{
-	level:            zapcore.ErrorLevel,
+	level:            zapcore.InfoLevel,
 	enableStacktrace: false,
 }
 
@@ -72,13 +73,14 @@ func mustNewLogger(opts loggerOptions) *zap.Logger {
 
 func main() {
 	var (
-		debug     bool
-		endPoint  string
-		headers   = make(map[string]string)
-		yamlPath  string
-		showAll   bool
-		deleteAll bool
-		nodeName  string
+		debug       bool
+		endPoint    string
+		headers     = make(map[string]string)
+		yamlPath    string
+		showAll     bool
+		deleteAll   bool
+		nodeName    string
+		queryLimits int64
 	)
 
 	logger := mustNewLogger(defaultLoggerOptions)
@@ -122,6 +124,27 @@ database creation, database init, adding a node, and replacing a node, are suppo
 			}
 
 			os.Stdout.Write(resp)
+		},
+	}
+
+	updateCmd := &cobra.Command{
+		Use:   "update",
+		Short: "Update various resources to the remote endpoint",
+		Long:  "Currently it only supports update query limits",
+		Run: func(cmd *cobra.Command, args []string) {
+			queryLimitArg := cmd.LocalFlags().Lookup("query-limit").Value.String()
+			logger.Debug("running command", zap.String("name", cmd.Name()), zap.String("args", queryLimitArg))
+
+			if len(queryLimitArg) == 0 {
+				logger.Fatal("need to specify query limit")
+			}
+
+			resp, err := etcd.DoUpdate(endPoint, queryLimits, logger)
+			if err != nil {
+				logger.Fatal("update limits failed", zap.Error(err))
+			}
+
+			os.Stdout.Write(resp) // nolint:errcheck
 		},
 	}
 
@@ -227,6 +250,22 @@ database creation, database init, adding a node, and replacing a node, are suppo
 		},
 	}
 
+	getLimitsCmd := &cobra.Command{
+		Use:     "limits",
+		Short:   "Get query limits from the remote endpoint",
+		Aliases: []string{"l"},
+		Run: func(cmd *cobra.Command, args []string) {
+			logger.Debug("running command", zap.String("command", cmd.Name()))
+
+			resp, err := etcd.DoGet(endPoint, logger)
+			if err != nil {
+				logger.Fatal("get query limits failed", zap.Error(err))
+			}
+
+			os.Stdout.Write(resp) // nolint:errcheck
+		},
+	}
+
 	deleteTopicCmd := &cobra.Command{
 		Use:     "topic",
 		Short:   "Delete topic from the remote endpoint",
@@ -243,10 +282,11 @@ database creation, database init, adding a node, and replacing a node, are suppo
 		},
 	}
 
-	rootCmd.AddCommand(getCmd, applyCmd, deleteCmd)
+	rootCmd.AddCommand(getCmd, applyCmd, updateCmd, deleteCmd)
 	getCmd.AddCommand(getNamespaceCmd)
 	getCmd.AddCommand(getPlacementCmd)
 	getCmd.AddCommand(getTopicCmd)
+	getCmd.AddCommand(getLimitsCmd)
 	deleteCmd.AddCommand(deletePlacementCmd)
 	deleteCmd.AddCommand(deleteNamespaceCmd)
 	deleteCmd.AddCommand(deleteTopicCmd)
@@ -256,6 +296,7 @@ database creation, database init, adding a node, and replacing a node, are suppo
 	rootCmd.PersistentFlags().StringVar(&endPoint, "endpoint", defaultEndpoint, "m3coordinator endpoint URL")
 	rootCmd.PersistentFlags().StringSliceVarP(&headersSlice, "header", "H", []string{}, "headers to append to requests")
 	applyCmd.Flags().StringVarP(&yamlPath, "file", "f", "", "times to echo the input")
+	updateCmd.Flags().Int64VarP(&queryLimits, "query-limit", "q", 0, "")
 	getNamespaceCmd.Flags().BoolVarP(&showAll, "show-all", "a", false, "times to echo the input")
 	deletePlacementCmd.Flags().BoolVarP(&deleteAll, "delete-all", "a", false, "delete the entire placement")
 	deleteCmd.PersistentFlags().StringVarP(&nodeName, "name", "n", "", "which namespace or node to delete")
