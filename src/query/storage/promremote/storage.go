@@ -53,11 +53,13 @@ var errorReadingBody = []byte("error reading body")
 
 var errNoEndpoints = errors.New("write did not match any of known endpoints")
 
-// WriteQueue This is used by a single thread go routine
+// WriteQueue A thread-safe queue
 type WriteQueue struct {
 	t        tenant
 	capacity int
 	queries  []*storage.WriteQuery
+
+	sync.RWMutex
 }
 
 func NewWriteQueue(t tenant, capacity int) *WriteQueue {
@@ -69,21 +71,27 @@ func NewWriteQueue(t tenant, capacity int) *WriteQueue {
 }
 
 func (wq *WriteQueue) pop() []*storage.WriteQuery {
+	wq.Lock()
+	defer wq.Unlock()
 	res := wq.queries
 	wq.queries = make([]*storage.WriteQuery, 0, wq.capacity)
 	return res
 }
 
 func (wq *WriteQueue) Len() int {
+	wq.RLock()
+	defer wq.RUnlock()
 	return len(wq.queries)
 }
 
-func (wq *WriteQueue) Add(query *storage.WriteQuery) ([]*storage.WriteQuery, error) {
+func (wq *WriteQueue) Add(query *storage.WriteQuery) []*storage.WriteQuery {
 	if wq.Len() >= wq.capacity {
-		return wq.pop(), errors.New(wq.t.name + " write queue is Full")
+		return wq.pop()
 	}
+	wq.Lock()
+	defer wq.Unlock()
 	wq.queries = append(wq.queries, query)
-	return nil, nil
+	return nil
 }
 
 func (wq *WriteQueue) Flush(ctx context.Context, p *promStorage) {
@@ -137,7 +145,13 @@ func NewStorage(opts Options) (storage.Storage, error) {
 				name: rule.Tenant,
 				attr: endpoint.attributes,
 			}
-			queriesWithFixedTenants[t] = NewWriteQueue(t, opts.queueSize)
+			if _, ok := queriesWithFixedTenants[t]; !ok {
+				queriesWithFixedTenants[t] = NewWriteQueue(t, opts.queueSize)
+			} else {
+				opts.logger.Error("found duplicated tenant in rules",
+					zap.String("tenant", t.name),
+					zap.Any("attr", t.attr))
+			}
 		}
 	}
 	s := &promStorage{
@@ -222,23 +236,15 @@ func (p *promStorage) startAsync(ctx context.Context) {
 						zap.String("timeseries", query.String()))
 					continue
 				}
-				if data, err := p.pendingQuery[t].Add(query); err != nil {
-					if data == nil {
-						p.scope.Tagged(map[string]string{"tenant": t.name}).Counter("write_queue_error").Inc(1)
-						p.logger.Error("Empty write queue",
-							zap.String("tenant", t.name),
-							zap.String("timeseries", query.String()),
-							zap.Error(err))
-					} else {
-						p.batchWrite.Inc(int64(len(data)))
-						p.workerPool.Go(func() {
-							if err := p.writeBatch(ctx, t, data); err != nil {
-								p.logger.Error("error writing async batch",
-									zap.String("tenant", t.name),
-									zap.Error(err))
-							}
-						})
-					}
+				if dataBatch := p.pendingQuery[t].Add(query); dataBatch != nil {
+					p.batchWrite.Inc(int64(len(dataBatch)))
+					p.workerPool.Go(func() {
+						if err := p.writeBatch(ctx, t, dataBatch); err != nil {
+							p.logger.Error("error writing async batch",
+								zap.String("tenant", t.name),
+								zap.Error(err))
+						}
+					})
 				}
 			case <-ticker.C:
 				for t, queue := range p.pendingQuery {
