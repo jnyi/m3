@@ -33,7 +33,6 @@ import (
 	"github.com/m3db/m3/src/query/storage/m3/storagemetadata"
 	"github.com/m3db/m3/src/query/storage/promremote/promremotetest"
 	"github.com/m3db/m3/src/query/ts"
-	xerrors "github.com/m3db/m3/src/x/errors"
 	"github.com/m3db/m3/src/x/tallytest"
 	xtime "github.com/m3db/m3/src/x/time"
 
@@ -47,18 +46,21 @@ import (
 var (
 	logger, _ = zap.NewDevelopment()
 	scope     = tally.NewTestScope("test_scope", map[string]string{})
+
+	tickDuration = time.Duration(100) * time.Millisecond
 )
 
 func TestWrite(t *testing.T) {
 	fakeProm := promremotetest.NewServer(t)
 	defer fakeProm.Close()
-
 	promStorage, err := NewStorage(Options{
-		endpoints: []EndpointOptions{{name: "testEndpoint", address: fakeProm.WriteAddr()}},
-		scope:     scope,
-		logger:    logger,
-		poolSize:  1,
-		queueSize: 1,
+		endpoints:     []EndpointOptions{{name: "testEndpoint", address: fakeProm.WriteAddr(), tenantHeader: "TENANT"}},
+		scope:         scope,
+		logger:        logger,
+		poolSize:      1,
+		queueSize:     1,
+		tenantDefault: "unknown",
+		tickDuration:  ptrDuration(tickDuration),
 	})
 	require.NoError(t, err)
 	defer closeWithCheck(t, promStorage)
@@ -81,8 +83,7 @@ func TestWrite(t *testing.T) {
 	require.NoError(t, err)
 	err = promStorage.Write(context.TODO(), wq)
 	require.NoError(t, err)
-
-	promWrite := fakeProm.GetLastWriteRequest()
+	promWrite := getWriteRequest(fakeProm)
 
 	expectedLabel := prompb.Label{
 		Name:  "test_tag_name",
@@ -141,24 +142,32 @@ func TestWriteBasedOnRetention(t *testing.T) {
 	promStorage, err := NewStorage(Options{
 		endpoints: []EndpointOptions{
 			{
-				address:    promShortRetention.WriteAddr(),
-				attributes: shortRetentionAttr,
+				address:      promShortRetention.WriteAddr(),
+				attributes:   shortRetentionAttr,
+				tenantHeader: "TENANT",
 			},
 			{
-				address:    promMediumRetention.WriteAddr(),
-				attributes: mediumRetentionAttr,
+				address:      promMediumRetention.WriteAddr(),
+				attributes:   mediumRetentionAttr,
+				tenantHeader: "TENANT",
 			},
 			{
-				address:    promLongRetention.WriteAddr(),
-				attributes: longRetentionAttr,
+				address:      promLongRetention.WriteAddr(),
+				attributes:   longRetentionAttr,
+				tenantHeader: "TENANT",
 			},
 			{
-				address:    promLongRetention2.WriteAddr(),
-				attributes: longRetentionAttr,
+				address:      promLongRetention2.WriteAddr(),
+				attributes:   longRetentionAttr,
+				tenantHeader: "TENANT",
 			},
 		},
-		scope:  scope,
-		logger: logger,
+		poolSize:      1,
+		queueSize:     9,
+		scope:         scope,
+		logger:        logger,
+		tenantDefault: "unknown",
+		tickDuration:  ptrDuration(tickDuration),
 	})
 	require.NoError(t, err)
 	defer closeWithCheck(t, promStorage)
@@ -167,46 +176,43 @@ func TestWriteBasedOnRetention(t *testing.T) {
 		reset()
 		err := writeTestMetric(t, promStorage, shortRetentionAttr)
 		require.NoError(t, err)
-		assert.NotNil(t, promShortRetention.GetLastWriteRequest())
-		assert.Nil(t, promMediumRetention.GetLastWriteRequest())
-		assert.Nil(t, promLongRetention.GetLastWriteRequest())
+		assert.NotNil(t, getWriteRequest(promShortRetention))
+		assert.Nil(t, getWriteRequest(promMediumRetention))
+		assert.Nil(t, getWriteRequest(promLongRetention))
 	})
 
 	t.Run("send medium retention write", func(t *testing.T) {
 		reset()
 		err := writeTestMetric(t, promStorage, mediumRetentionAttr)
 		require.NoError(t, err)
-		assert.Nil(t, promShortRetention.GetLastWriteRequest())
-		assert.NotNil(t, promMediumRetention.GetLastWriteRequest())
-		assert.Nil(t, promLongRetention.GetLastWriteRequest())
+		assert.Nil(t, getWriteRequest(promShortRetention))
+		assert.NotNil(t, getWriteRequest(promMediumRetention))
+		assert.Nil(t, getWriteRequest(promLongRetention))
 	})
 
 	t.Run("send write to multiple instances configured with same retention", func(t *testing.T) {
 		reset()
 		err := writeTestMetric(t, promStorage, longRetentionAttr)
 		require.NoError(t, err)
-		assert.Nil(t, promShortRetention.GetLastWriteRequest())
-		assert.Nil(t, promMediumRetention.GetLastWriteRequest())
-		assert.NotNil(t, promLongRetention.GetLastWriteRequest())
-		assert.NotNil(t, promLongRetention2.GetLastWriteRequest())
+		assert.Nil(t, getWriteRequest(promShortRetention))
+		assert.Nil(t, getWriteRequest(promMediumRetention))
+		assert.NotNil(t, getWriteRequest(promLongRetention))
+		assert.NotNil(t, getWriteRequest(promLongRetention2))
 	})
 
 	t.Run("send unconfigured retention write", func(t *testing.T) {
 		reset()
-		err := writeTestMetric(t, promStorage, storagemetadata.Attributes{
+		writeTestMetric(t, promStorage, storagemetadata.Attributes{
 			Resolution: mediumRetentionAttr.Resolution + 1,
 			Retention:  mediumRetentionAttr.Retention,
 		})
-		require.Error(t, err)
-		err = writeTestMetric(t, promStorage, storagemetadata.Attributes{
+		writeTestMetric(t, promStorage, storagemetadata.Attributes{
 			Resolution: mediumRetentionAttr.Resolution,
 			Retention:  mediumRetentionAttr.Retention + 1,
 		})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "write did not match any of known endpoints")
-		assert.Nil(t, promShortRetention.GetLastWriteRequest())
-		assert.Nil(t, promMediumRetention.GetLastWriteRequest())
-		assert.Nil(t, promLongRetention.GetLastWriteRequest())
+		assert.Nil(t, getWriteRequest(promShortRetention))
+		assert.Nil(t, getWriteRequest(promMediumRetention))
+		assert.Nil(t, getWriteRequest(promLongRetention))
 		const droppedWrites = "test_scope.prom_remote_storage.dropped_writes"
 		tallytest.AssertCounterValue(t, 2, scope.Snapshot(), droppedWrites, map[string]string{})
 	})
@@ -214,13 +220,12 @@ func TestWriteBasedOnRetention(t *testing.T) {
 	t.Run("error should not prevent sending to other instances", func(t *testing.T) {
 		reset()
 		promLongRetention.SetError("test err", http.StatusInternalServerError)
-		err := writeTestMetric(t, promStorage, longRetentionAttr)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "test err")
-		assert.NotNil(t, promLongRetention2.GetLastWriteRequest())
+		writeTestMetric(t, promStorage, longRetentionAttr)
+		assert.NotNil(t, getWriteRequest(promLongRetention2))
 	})
 }
 
+/* Disable error handling as everything is async to group by tenants according to rules
 func TestErrorHandling(t *testing.T) {
 	svr := promremotetest.NewServer(t)
 	defer svr.Close()
@@ -231,9 +236,13 @@ func TestErrorHandling(t *testing.T) {
 		Resolution:  5 * time.Minute,
 	}
 	promStorage, err := NewStorage(Options{
-		endpoints: []EndpointOptions{{address: svr.WriteAddr(), attributes: attr}},
-		scope:     scope,
-		logger:    logger,
+		endpoints:     []EndpointOptions{{address: svr.WriteAddr(), attributes: attr, tenantHeader: "TENANT"}},
+		poolSize:      1,
+		queueSize:     1,
+		scope:         scope,
+		logger:        logger,
+		tenantDefault: "unknown",
+		tickDuration:  ptrDuration(tickDuration),
 	})
 	require.NoError(t, err)
 	defer closeWithCheck(t, promStorage)
@@ -254,6 +263,7 @@ func TestErrorHandling(t *testing.T) {
 		assert.False(t, xerrors.IsInvalidParams(err))
 	})
 }
+*/
 
 func closeWithCheck(t *testing.T, c io.Closer) {
 	require.NoError(t, c.Close())
@@ -276,4 +286,13 @@ func writeTestMetric(t *testing.T, s storage.Storage, attr storagemetadata.Attri
 	})
 	require.NoError(t, err)
 	return s.Write(context.TODO(), wq)
+}
+
+func getWriteRequest(promServer *promremotetest.TestPromServer) *prompb.WriteRequest {
+	wq := promServer.GetLastWriteRequest()
+	for retries := 0; wq == nil && retries < 10; retries++ {
+		time.Sleep(tickDuration)
+		wq = promServer.GetLastWriteRequest()
+	}
+	return wq
 }

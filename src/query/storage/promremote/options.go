@@ -66,12 +66,15 @@ func NewOptions(
 				}
 			}
 		}
-		otherHeaders := make(map[string]string, len(endpoint.Headers))
-		for _, header := range endpoint.Headers {
-			if header.Name == endpoint.TenantHeader {
-				return Options{}, fmt.Errorf("header %s is reserved for tenant header", endpoint.TenantHeader)
+		var otherHeaders map[string]string
+		if len(endpoint.Headers) > 0 {
+			otherHeaders = make(map[string]string, len(endpoint.Headers))
+			for _, header := range endpoint.Headers {
+				if header.Name == endpoint.TenantHeader {
+					return Options{}, fmt.Errorf("header %s is reserved for tenant header", endpoint.TenantHeader)
+				}
+				otherHeaders[header.Name] = header.Value
 			}
-			otherHeaders[header.Name] = header.Value
 		}
 		endpoints = append(endpoints, EndpointOptions{
 			name:              endpoint.Name,
@@ -126,8 +129,8 @@ func NewOptions(
 		httpOptions:   clientOpts,
 		scope:         scope,
 		logger:        logger,
-		queueSize:     *cfg.QueueSize,
-		poolSize:      *cfg.PoolSize,
+		queueSize:     cfg.QueueSize,
+		poolSize:      cfg.PoolSize,
 		tenantDefault: cfg.TenantDefault,
 		tenantRules:   tenantRules,
 		tickDuration:  cfg.TickDuration,
@@ -162,13 +165,10 @@ func validateBackendConfiguration(cfg *config.PrometheusRemoteBackendConfigurati
 	if cfg.TickDuration != nil && *cfg.TickDuration < 0 {
 		return errors.New("tickDuration can't be negative")
 	}
-	if cfg.TenantDefault == "" {
-		return errors.New("tenantDefault must be set")
-	}
-
+	requireTenantHeader := strings.TrimSpace(cfg.TenantDefault) != ""
 	seenNames := map[string]struct{}{}
 	for _, endpoint := range cfg.Endpoints {
-		if err := validateEndpointConfiguration(endpoint); err != nil {
+		if err := validateEndpointConfiguration(endpoint, requireTenantHeader); err != nil {
 			return err
 		}
 		if _, ok := seenNames[endpoint.Name]; ok {
@@ -179,7 +179,7 @@ func validateBackendConfiguration(cfg *config.PrometheusRemoteBackendConfigurati
 	return nil
 }
 
-func validateEndpointConfiguration(endpoint config.PrometheusRemoteBackendEndpointConfiguration) error {
+func validateEndpointConfiguration(endpoint config.PrometheusRemoteBackendEndpointConfiguration, requireTenantHeader bool) error {
 	if endpoint.StoragePolicy != nil {
 		if endpoint.StoragePolicy.Resolution <= 0 {
 			return errors.New("endpoint resolution must be positive")
@@ -193,6 +193,9 @@ func validateEndpointConfiguration(endpoint config.PrometheusRemoteBackendEndpoi
 	}
 	if strings.TrimSpace(endpoint.Name) == "" {
 		return errors.New("endpoint name must be set")
+	}
+	if requireTenantHeader && strings.TrimSpace(endpoint.TenantHeader) == "" {
+		return errors.New("endpoint tenant header must be set when default tenant is given")
 	}
 	return nil
 }
