@@ -34,7 +34,7 @@ var errNilQuery = errors.New("received nil query or no samples in query")
 
 func convertAndEncodeWriteQuery(queries []*storage.WriteQuery) ([]byte, error) {
 	promQuery := convertWriteQuery(queries)
-	if len(promQuery.Timeseries) == 0 {
+	if promQuery == nil || len(promQuery.Timeseries) == 0 {
 		return []byte{}, errNilQuery
 	}
 	data, err := promQuery.Marshal()
@@ -45,6 +45,9 @@ func convertAndEncodeWriteQuery(queries []*storage.WriteQuery) ([]byte, error) {
 }
 
 func convertWriteQuery(queries []*storage.WriteQuery) *prompb.WriteRequest {
+	if queries == nil || len(queries) == 0 {
+		return nil
+	}
 	ts := make([]prompb.TimeSeries, 0, len(queries))
 	for _, query := range queries {
 		if query == nil || len(query.Datapoints()) == 0 {

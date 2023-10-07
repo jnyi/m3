@@ -76,6 +76,73 @@ func TestNewFromConfiguration(t *testing.T) {
 	assert.Equal(t, time.Second, opts.httpOptions.IdleConnTimeout)
 	assert.Equal(t, 1, opts.httpOptions.MaxIdleConns)
 	assert.Equal(t, true, opts.httpOptions.DisableCompression)
+	assert.Equal(t, "", opts.tenantDefault)
+}
+
+func TestTenantRules(t *testing.T) {
+	logger := zap.NewNop()
+	opts, err := NewOptions(&config.PrometheusRemoteBackendConfiguration{
+		Endpoints: []config.PrometheusRemoteBackendEndpointConfiguration{{
+			Name:         "testEndpoint",
+			Address:      "testAddress",
+			TenantHeader: "THANOS-TENANT",
+			Headers: []config.PrometheusRemoteBackendEndpointHeader{{
+				Name:  "testHeader",
+				Value: "testHeaderValue",
+			}},
+			StoragePolicy: &config.PrometheusRemoteBackendStoragePolicyConfiguration{
+				Resolution: time.Second,
+				Retention:  time.Millisecond,
+				Downsample: &m3.DownsampleClusterStaticNamespaceConfiguration{
+					All: true,
+				},
+			},
+		}},
+		RequestTimeout:  ptrDuration(time.Nanosecond),
+		ConnectTimeout:  ptrDuration(time.Microsecond),
+		KeepAlive:       ptrDuration(time.Millisecond),
+		IdleConnTimeout: ptrDuration(time.Second),
+		MaxIdleConns:    ptrInt(1),
+		TenantDefault:   "unknown",
+		TenantRules: []config.PrometheusRemoteBackendTenant{
+			{
+				Filter: "__name__:rpc_*",
+				Tenant: "app-framework",
+			},
+			{
+				Filter: "namespace:m3",
+				Tenant: "monitoring-platform",
+			},
+		},
+	}, tally.NoopScope, logger)
+	require.NoError(t, err)
+
+	assert.Equal(t, []EndpointOptions{{
+		name:         "testEndpoint",
+		address:      "testAddress",
+		tenantHeader: "THANOS-TENANT",
+		otherHeaders: map[string]string{"testHeader": "testHeaderValue"},
+		attributes: storagemetadata.Attributes{
+			MetricsType: storagemetadata.AggregatedMetricsType,
+			Resolution:  time.Second,
+			Retention:   time.Millisecond,
+		},
+		downsampleOptions: &m3.ClusterNamespaceDownsampleOptions{
+			All: true,
+		},
+	}}, opts.endpoints)
+	assert.Equal(t, tally.NoopScope, opts.scope)
+	assert.Equal(t, logger, opts.logger)
+	assert.Equal(t, time.Nanosecond, opts.httpOptions.RequestTimeout)
+	assert.Equal(t, time.Microsecond, opts.httpOptions.ConnectTimeout)
+	assert.Equal(t, time.Millisecond, opts.httpOptions.KeepAlive)
+	assert.Equal(t, time.Second, opts.httpOptions.IdleConnTimeout)
+	assert.Equal(t, 1, opts.httpOptions.MaxIdleConns)
+	assert.Equal(t, true, opts.httpOptions.DisableCompression)
+	assert.Equal(t, "unknown", opts.tenantDefault)
+	assert.Equal(t, 2, len(opts.tenantRules))
+	assert.Equal(t, "app-framework", opts.tenantRules[0].Tenant)
+	assert.Equal(t, "monitoring-platform", opts.tenantRules[1].Tenant)
 }
 
 func TestUnaggregatedEndpoint(t *testing.T) {
@@ -202,7 +269,7 @@ func TestValidateEndpoint(t *testing.T) {
 	t.Run("storage policy is optional", func(t *testing.T) {
 		cfg := getValidEndpointConfiguration()
 		cfg.StoragePolicy = nil
-		err := validateEndpointConfiguration(cfg)
+		err := validateEndpointConfiguration(cfg, false)
 		require.NoError(t, err)
 	})
 
@@ -223,6 +290,14 @@ func TestValidateEndpoint(t *testing.T) {
 		cfg.StoragePolicy.Resolution = 0
 		assertEndpointValidationError(t, cfg, "endpoint resolution must be positive")
 	})
+
+	t.Run("tenant header must be set", func(t *testing.T) {
+		cfg := getValidEndpointConfiguration()
+		cfg.TenantHeader = ""
+		err := validateEndpointConfiguration(cfg, true)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "endpoint tenant header must be set when default tenant is given")
+	})
 }
 
 func assertValidationError(t *testing.T, cfg *config.PrometheusRemoteBackendConfiguration, expectedMsg string) {
@@ -236,7 +311,7 @@ func assertEndpointValidationError(
 	cfg config.PrometheusRemoteBackendEndpointConfiguration,
 	expectedMsg string,
 ) {
-	err := validateEndpointConfiguration(cfg)
+	err := validateEndpointConfiguration(cfg, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), expectedMsg)
 }

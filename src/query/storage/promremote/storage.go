@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"math/rand"
 	"net/http"
 	"sync"
 	"time"
@@ -46,25 +47,118 @@ import (
 )
 
 const metricsScope = "prom_remote_storage"
+const logSamplingRate = 0.001
 
 var errorReadingBody = []byte("error reading body")
 
 var errNoEndpoints = errors.New("write did not match any of known endpoints")
 
-// NewStorage returns new Prometheus remote write compatible storage
-func NewStorage(opts Options) (storage.Storage, error) {
-	client := xhttp.NewHTTPClient(opts.httpOptions)
-	scope := opts.scope.SubScope(metricsScope)
+// WriteQueue A thread-safe queue
+type WriteQueue struct {
+	t        tenant
+	capacity int
+	queries  []*storage.WriteQuery
+
+	sync.RWMutex
+}
+
+func NewWriteQueue(t tenant, capacity int) *WriteQueue {
+	return &WriteQueue{
+		t:        t,
+		capacity: capacity,
+		queries:  make([]*storage.WriteQuery, 0, capacity),
+	}
+}
+
+func (wq *WriteQueue) pop() []*storage.WriteQuery {
+	wq.Lock()
+	defer wq.Unlock()
+	res := wq.queries
+	wq.queries = make([]*storage.WriteQuery, 0, wq.capacity)
+	return res
+}
+
+func (wq *WriteQueue) Len() int {
+	wq.RLock()
+	defer wq.RUnlock()
+	return len(wq.queries)
+}
+
+func (wq *WriteQueue) Add(query *storage.WriteQuery) []*storage.WriteQuery {
+	if wq.Len() >= wq.capacity {
+		return wq.pop()
+	}
+	wq.Lock()
+	defer wq.Unlock()
+	wq.queries = append(wq.queries, query)
+	return nil
+}
+
+func (wq *WriteQueue) Flush(ctx context.Context, p *promStorage) {
+	data := wq.pop()
+	size := int64(len(data))
+	if size == 0 {
+		return
+	}
+	p.tickWrite.Inc(size)
+	if err := p.writeBatch(ctx, wq.t, data); err != nil {
+		p.logger.Error("error writing async batch",
+			zap.String("tenant", wq.t.name),
+			zap.Error(err))
+	}
+}
+
+func validateOptions(opts Options) error {
 	if opts.poolSize < 1 {
-		return nil, errors.New("poolSize must be greater than 0")
+		return errors.New("poolSize must be greater than 0")
 	}
 	if opts.queueSize < 1 {
-		return nil, errors.New("queueSize must be greater than 0 to batch writes")
+		return errors.New("queueSize must be greater than 0 to batch writes")
+	}
+	if opts.tickDuration == nil {
+		return errors.New("tickDuration must be set")
+	}
+	if len(opts.endpoints) == 0 {
+		return errors.New("endpoint must not be empty")
+	}
+	return nil
+}
+
+// NewStorage returns new Prometheus remote write compatible storage
+func NewStorage(opts Options) (storage.Storage, error) {
+	if err := validateOptions(opts); err != nil {
+		return nil, err
+	}
+	client := xhttp.NewHTTPClient(opts.httpOptions)
+	scope := opts.scope.SubScope(metricsScope)
+	ctx, cancel := context.WithCancel(context.Background())
+	// Use fixed
+	queriesWithFixedTenants := make(map[tenant]*WriteQueue, len(opts.tenantRules)+1)
+	for _, endpoint := range opts.endpoints {
+		defaultTenant := tenant{
+			name: opts.tenantDefault,
+			attr: endpoint.attributes,
+		}
+		queriesWithFixedTenants[defaultTenant] = NewWriteQueue(defaultTenant, opts.queueSize)
+		for _, rule := range opts.tenantRules {
+			t := tenant{
+				name: rule.Tenant,
+				attr: endpoint.attributes,
+			}
+			if _, ok := queriesWithFixedTenants[t]; !ok {
+				queriesWithFixedTenants[t] = NewWriteQueue(t, opts.queueSize)
+			} else {
+				opts.logger.Error("found duplicated tenant in rules",
+					zap.String("tenant", t.name),
+					zap.Any("attr", t.attr))
+			}
+		}
 	}
 	s := &promStorage{
 		opts:            opts,
 		client:          client,
 		endpointMetrics: initEndpointMetrics(opts.endpoints, scope),
+		scope:           scope,
 		droppedWrites:   scope.Counter("dropped_writes"),
 		enqueued:        scope.Counter("enqueued"),
 		batchWrite:      scope.Counter("batch_write"),
@@ -72,9 +166,11 @@ func NewStorage(opts Options) (storage.Storage, error) {
 		logger:          opts.logger,
 		queryQueue:      make(chan *storage.WriteQuery, opts.queueSize),
 		workerPool:      xsync.NewWorkerPool(opts.poolSize),
-		pendingQuery:    make(map[tenant][]*storage.WriteQuery),
+		pendingQuery:    queriesWithFixedTenants,
+		noTenantFound:   scope.Counter("no_tenant_found"),
+		cancel:          cancel,
 	}
-	s.startAsync()
+	s.startAsync(ctx)
 	return s, nil
 }
 
@@ -83,6 +179,7 @@ type promStorage struct {
 	opts            Options
 	client          *http.Client
 	endpointMetrics map[string]instrument.MethodMetrics
+	scope           tally.Scope
 	droppedWrites   tally.Counter
 	enqueued        tally.Counter
 	batchWrite      tally.Counter
@@ -90,7 +187,9 @@ type promStorage struct {
 	logger          *zap.Logger
 	queryQueue      chan *storage.WriteQuery
 	workerPool      xsync.WorkerPool
-	pendingQuery    map[tenant][]*storage.WriteQuery
+	pendingQuery    map[tenant]*WriteQueue
+	noTenantFound   tally.Counter
+	cancel          context.CancelFunc
 }
 
 type tenant struct {
@@ -113,53 +212,62 @@ func (p *promStorage) getTenant(query *storage.WriteQuery) tenant {
 	}
 }
 
-func (p *promStorage) startAsync() {
+func (p *promStorage) startAsync(ctx context.Context) {
 	p.logger.Info("Start prometheus remote write storage async job",
+		zap.Int("queueSize", p.opts.queueSize),
 		zap.Int("poolSize", p.opts.poolSize))
 	p.workerPool.Init()
 	ticker := time.NewTicker(*p.opts.tickDuration)
 	go func() {
 		for {
-			ctx := context.Background()
 			select {
 			case query := <-p.queryQueue:
-				tenant := p.getTenant(query)
-				if _, ok := p.pendingQuery[tenant]; !ok {
-					p.pendingQuery[tenant] = make([]*storage.WriteQuery, 0, p.opts.queueSize)
+				if query == nil {
+					time.Sleep(100 * time.Millisecond)
+					continue
 				}
-				p.pendingQuery[tenant] = append(p.pendingQuery[tenant], query)
-				if len(p.pendingQuery[tenant]) >= p.opts.queueSize {
-					retain := p.pendingQuery[tenant]
-					p.batchWrite.Inc(int64(len(retain)))
-					p.pendingQuery[tenant] = nil
+				t := p.getTenant(query)
+				if _, ok := p.pendingQuery[t]; !ok {
+					p.noTenantFound.Inc(1)
+					p.droppedWrites.Inc(1)
+					p.logger.Error("no pre-defined tenant found, dropping it",
+						zap.String("tenant", t.name), zap.Any("attributes", t.attr),
+						zap.String("defaultTenant", p.opts.tenantDefault),
+						zap.String("timeseries", query.String()))
+					continue
+				}
+				if dataBatch := p.pendingQuery[t].Add(query); dataBatch != nil {
+					p.batchWrite.Inc(int64(len(dataBatch)))
 					p.workerPool.Go(func() {
-						p.writeBatch(ctx, tenant, retain)
+						if err := p.writeBatch(ctx, t, dataBatch); err != nil {
+							p.logger.Error("error writing async batch",
+								zap.String("tenant", t.name),
+								zap.Error(err))
+						}
 					})
 				}
-			// TODO: add a timer to flush pending queries periodically
 			case <-ticker.C:
-				for tenant, queries := range p.pendingQuery {
-					if len(queries) == 0 {
-						delete(p.pendingQuery, tenant)
+				for t, queue := range p.pendingQuery {
+					if queue.Len() <= p.opts.queueSize/10 {
+						if queue.Len() != 0 {
+							p.logger.Warn("don't do tick flush for small batch",
+								zap.String("tenant", t.name),
+								zap.Int("size", queue.Len()),
+								zap.Int("queue size", p.opts.queueSize))
+						}
 						continue
 					}
-					if len(queries) < 5 {
-						p.logger.Error("don't do tick flush for small batch with less than 5 samples, "+
-							"samples will be evently written to remote storage as it accumulates. "+
-							"This error is to detect if there are any corrupt tenants that never grow over 5 samples.",
-							zap.String("tenant", tenant.name), zap.Int("size", len(queries)),
-							zap.Any("example", queries[0]))
-						continue
-					}
-					p.tickWrite.Inc(int64(len(queries)))
 					p.workerPool.Go(func() {
-						p.writeBatch(ctx, tenant, queries)
+						queue.Flush(ctx, p)
 					})
-					// clear the entry
-					delete(p.pendingQuery, tenant)
 				}
+			case <-ctx.Done():
+				p.logger.Info("attempt to exit async go routine")
+				goto exit
 			}
 		}
+	exit:
+		p.logger.Info("successfully exit due to graceful shutdown")
 	}()
 }
 
@@ -172,11 +280,14 @@ func (p *promStorage) Write(ctx context.Context, query *storage.WriteQuery) erro
 }
 
 func (p *promStorage) writeBatch(ctx context.Context, tenant tenant, queries []*storage.WriteQuery) error {
-	p.logger.Debug("async write batch",
-		zap.String("tenant", tenant.name),
-		zap.Duration("retention", tenant.attr.Retention),
-		zap.Duration("resolution", tenant.attr.Resolution),
-		zap.Int("size", len(queries)))
+	logSampling := rand.Float32()
+	if logSampling < logSamplingRate {
+		p.logger.Debug("async write batch",
+			zap.String("tenant", tenant.name),
+			zap.Duration("retention", tenant.attr.Retention),
+			zap.Duration("resolution", tenant.attr.Resolution),
+			zap.Int("size", len(queries)))
+	}
 	encoded, err := convertAndEncodeWriteQuery(queries)
 	if err != nil {
 		return err
@@ -220,9 +331,6 @@ func (p *promStorage) writeBatch(ctx context.Context, tenant tenant, queries []*
 			zap.Duration("resolution", tenant.attr.Resolution),
 		)
 	}
-	if multiErr.FinalError() != nil {
-		p.logger.Error("error writing async batch", zap.Error(multiErr.FinalError()))
-	}
 	return multiErr.FinalError()
 }
 
@@ -232,19 +340,11 @@ func (p *promStorage) Type() storage.Type {
 
 func (p *promStorage) Close() error {
 	close(p.queryQueue)
+	p.cancel()
 	ctx := context.Background()
-	var wg sync.WaitGroup
-	for tenant, queries := range p.pendingQuery {
-		if len(queries) == 0 {
-			continue
-		}
-		wg.Add(1)
-		p.workerPool.Go(func() {
-			p.writeBatch(ctx, tenant, queries)
-			wg.Done()
-		})
+	for _, queries := range p.pendingQuery {
+		queries.Flush(ctx, p)
 	}
-	wg.Wait()
 	p.client.CloseIdleConnections()
 	return nil
 }
