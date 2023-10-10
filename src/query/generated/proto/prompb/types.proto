@@ -14,7 +14,6 @@ message Sample {
 message TimeSeries {
   repeated Label labels   = 1 [(gogoproto.nullable) = false];
   repeated Sample samples = 2 [(gogoproto.nullable) = false];
-  MetricType type         = 3;
   string unit             = 4;
   string help             = 5;
 
@@ -22,6 +21,7 @@ message TimeSeries {
   // should never clash with prometheus fields.
   M3Type m3_type        = 101;
   Source source         = 102;
+  MetricType type       = 103;
 }
 
 message Label {
