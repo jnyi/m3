@@ -299,7 +299,7 @@ thrift-gen-$(SUBDIR): install-tools
 proto-gen-$(SUBDIR): install-tools
 	@echo "--- Generating protobuf files $(SUBDIR)"
 	@[ ! -d src/$(SUBDIR)/$(proto_rules_dir) ] || \
-		PATH=$(combined_bin_paths):$(PATH) PACKAGE=$(m3_package) $(auto_gen) src/$(SUBDIR)/$(proto_output_dir) src/$(SUBDIR)/$(proto_rules_dir)
+		PATH="$(combined_bin_paths):$(PATH)" PACKAGE=$(m3_package) $(auto_gen) src/$(SUBDIR)/$(proto_output_dir) src/$(SUBDIR)/$(proto_rules_dir)
 
 .PHONY: asset-gen-$(SUBDIR)
 asset-gen-$(SUBDIR): install-tools
