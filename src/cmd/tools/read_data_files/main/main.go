@@ -73,7 +73,7 @@ func main() {
 		optShard      = getopt.IntLong("shard", 's', allShards,
 			fmt.Sprintf("Shard [expected format uint32], or %v for all shards in the directory", allShards))
 		optBlockstart  = getopt.Int64Long("block-start", 'b', 0, "Block Start Time [in nsec]")
-		volume         = getopt.Int64Long("volume", 'v', 0, "Volume number")
+		volume         = getopt.Int64Long("volume", 'v', -1, "Volume number. If not specified, will find the largest volume.")
 		fileSetTypeArg = getopt.StringLong("fileset-type", 't', flushType, fmt.Sprintf("%s|%s", flushType, snapshotType))
 		idFilter       = getopt.StringLong("id-filter", 'f', "", "ID Contains Filters (optional), could be a comma separated list to specify multiple filters")
 		benchmark      = getopt.StringLong(
@@ -94,7 +94,6 @@ func main() {
 		*optNamespace == "" ||
 		*optShard < allShards ||
 		*optBlockstart <= 0 ||
-		*volume < 0 ||
 		(*fileSetTypeArg != snapshotType && *fileSetTypeArg != flushType) {
 		getopt.Usage()
 		os.Exit(1)
@@ -154,10 +153,13 @@ func main() {
 			start          = time.Now()
 		)
 
-		volumeNum, err := getVolumeNumber(*optPathPrefix, *optNamespace, int(shard), strconv.FormatInt(*optBlockstart, 10))
-		if err != nil {
-			log.Errorf("Failed to get volume number from file names for shard %d, using volume number %d from command line", shard, *volume)
-			volumeNum = int(*volume)
+		volumeNum := int(*volume)
+		if volumeNum < 0 {
+			// NB: getVolumeNumber() only looks at data files (not snapshot files).
+			volumeNum, err = getVolumeNumber(*optPathPrefix, *optNamespace, int(shard), strconv.FormatInt(*optBlockstart, 10))
+			if err != nil {
+				log.Errorf("Failed to get volume number from file names for shard %d, using default volume number 0", shard)
+			}
 		}
 
 		openOpts := fs.DataReaderOpenOptions{
