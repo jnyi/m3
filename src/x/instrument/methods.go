@@ -22,6 +22,7 @@ package instrument
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/uber-go/tally"
@@ -300,6 +301,43 @@ func (t *sampledTimer) Record(d time.Duration) {
 		return
 	}
 	t.Timer.Record(d)
+}
+
+// HttpMetrics is a bundle of metrics for http responses
+type HttpMetrics struct {
+	scope   tally.Scope
+	method  string
+	opts    TimerOptions
+	count   sync.Map
+	latency sync.Map
+}
+
+func (h *HttpMetrics) RecordResponse(code int, d time.Duration) {
+	c, ok := h.count.Load(code)
+	if !ok {
+		status := fmt.Sprintf("%d", code)
+		c = h.scope.Tagged(map[string]string{"code": status}).Counter(h.method + ".total")
+		h.count.Store(code, c)
+	}
+	c.(tally.Counter).Inc(1)
+
+	l, ok := h.latency.Load(code)
+	if !ok {
+		status := fmt.Sprintf("%d", code)
+		l = NewTimer(h.scope.Tagged(map[string]string{"code": status}), h.method+".latency", h.opts)
+		h.latency.Store(code, l)
+	}
+	l.(tally.Timer).Record(d)
+}
+
+func NewHttpMetrics(scope tally.Scope, method string, opts TimerOptions) *HttpMetrics {
+	return &HttpMetrics{
+		scope:   scope,
+		method:  method,
+		opts:    opts,
+		count:   sync.Map{},
+		latency: sync.Map{},
+	}
 }
 
 // MethodMetrics is a bundle of common metrics with a uniform naming scheme.
