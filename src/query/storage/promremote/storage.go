@@ -178,7 +178,7 @@ type promStorage struct {
 	unimplementedPromStorageMethods
 	opts            Options
 	client          *http.Client
-	endpointMetrics map[string]instrument.MethodMetrics
+	endpointMetrics map[string]*instrument.HttpMetrics
 	scope           tally.Scope
 	droppedWrites   tally.Counter
 	enqueued        tally.Counter
@@ -310,7 +310,7 @@ func (p *promStorage) writeBatch(ctx context.Context, tenant tenant, queries []*
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			err := p.writeSingle(ctx, metrics, endpoint, tenant, bytes.NewReader(encoded))
+			err := p.write(ctx, metrics, endpoint, tenant, bytes.NewReader(encoded))
 			if err != nil {
 				errLock.Lock()
 				multiErr = multiErr.Add(err)
@@ -357,9 +357,10 @@ func (p *promStorage) Name() string {
 	return "prom-remote"
 }
 
-func (p *promStorage) writeSingle(
+// The actual method to write to remote endpoint
+func (p *promStorage) write(
 	ctx context.Context,
-	metrics instrument.MethodMetrics,
+	metrics *instrument.HttpMetrics,
 	endpoint EndpointOptions,
 	tenant tenant,
 	encoded io.Reader,
@@ -389,12 +390,12 @@ func (p *promStorage) writeSingle(
 	resp, err := p.client.Do(req)
 	methodDuration := time.Since(start)
 	if err != nil {
-		metrics.ReportError(methodDuration)
+		metrics.RecordResponse(503, methodDuration)
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
+	metrics.RecordResponse(resp.StatusCode, methodDuration)
 	if resp.StatusCode/100 != 2 {
-		metrics.ReportError(methodDuration)
 		response, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
 			p.logger.Error("error reading body", zap.Error(err))
@@ -409,19 +410,18 @@ func (p *promStorage) writeSingle(
 		}
 		return genericError
 	}
-	metrics.ReportSuccess(methodDuration)
 	return nil
 }
 
-func initEndpointMetrics(endpoints []EndpointOptions, scope tally.Scope) map[string]instrument.MethodMetrics {
-	metrics := make(map[string]instrument.MethodMetrics, len(endpoints))
+func initEndpointMetrics(endpoints []EndpointOptions, scope tally.Scope) map[string]*instrument.HttpMetrics {
+	metrics := make(map[string]*instrument.HttpMetrics, len(endpoints))
 	for _, endpoint := range endpoints {
 		endpointScope := scope.Tagged(map[string]string{"endpoint_name": endpoint.name})
-		methodMetrics := instrument.NewMethodMetrics(endpointScope, "writeSingle", instrument.TimerOptions{
+		httpMetrics := instrument.NewHttpMetrics(endpointScope, "write", instrument.TimerOptions{
 			Type:             instrument.HistogramTimerType,
 			HistogramBuckets: tally.DefaultBuckets,
 		})
-		metrics[endpoint.name] = methodMetrics
+		metrics[endpoint.name] = httpMetrics
 	}
 	return metrics
 }
