@@ -25,6 +25,11 @@ package prom
 import (
 	"context"
 	"errors"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/m3db/m3/src/query/api/v1/handler/prometheus/handleroptions"
 	"github.com/m3db/m3/src/query/api/v1/handler/prometheus/native"
 	"github.com/m3db/m3/src/query/api/v1/options"
@@ -35,10 +40,8 @@ import (
 	"github.com/m3db/m3/src/query/storage/prometheus"
 	xerrors "github.com/m3db/m3/src/x/errors"
 	xhttp "github.com/m3db/m3/src/x/net/http"
-	"net/http"
-	"strings"
-	"sync"
 
+	xsync "github.com/m3db/m3/src/x/sync"
 	errs "github.com/pkg/errors"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/promql/parser"
@@ -94,12 +97,34 @@ var (
 	}
 )
 
+type queryShadowing struct {
+	// This URL doesn't includes the path, "api/v1/query_range" or "api/v1/query".
+	// It shouldn't end with a slash('/').
+	shadowQueryURL string
+	workerPool     xsync.WorkerPool
+	client         *http.Client
+}
+
+func newQueryShadowing(shadowQueryURL string, numWorkers int) (*queryShadowing, error) {
+	if numWorkers <= 0 {
+		return nil, errors.New("numWorkers must be positive")
+	}
+	workerPool := xsync.NewWorkerPool(numWorkers)
+	workerPool.Init()
+	return &queryShadowing{
+		shadowQueryURL: shadowQueryURL,
+		workerPool:     workerPool,
+		client:         &http.Client{},
+	}, nil
+}
+
 type readHandler struct {
 	hOpts               options.HandlerOptions
 	scope               tally.Scope
 	logger              *zap.Logger
 	opts                opts
 	returnedDataMetrics native.PromReadReturnedDataMetrics
+	qs  *queryShadowing
 }
 
 func newReadHandler(
@@ -109,13 +134,64 @@ func newReadHandler(
 	scope := hOpts.InstrumentOpts().MetricsScope().Tagged(
 		map[string]string{"handler": "prometheus-read"},
 	)
-	return &readHandler{
+	var qs *queryShadowing = nil
+	if hOpts.ShadowQueryURL() != "" {
+		var err error
+		qs, err = newQueryShadowing(hOpts.ShadowQueryURL(), hOpts.QueryShadowingWorkers())
+		if err != nil {
+			return nil, err
+		}
+	}
+	handler := &readHandler{
 		hOpts:               hOpts,
 		opts:                options,
 		scope:               scope,
 		logger:              hOpts.InstrumentOpts().Logger(),
 		returnedDataMetrics: native.NewPromReadReturnedDataMetrics(scope),
-	}, nil
+		qs: 			     qs,
+	}
+	if handler.qs != nil {
+		handler.logger.Info("Query shadowing is enabled",
+		    zap.String("shadowQueryURL", handler.qs.shadowQueryURL),
+			zap.Int("QueryShadowingWorkers", hOpts.QueryShadowingWorkers()),
+		)
+	}
+	return handler, nil
+}
+
+func (h* readHandler) sendShadowQuery(r *http.Request) {
+	if (h.qs == nil) {
+		return
+	}
+	// Forward the requests to h.qs.shadowQueryURL
+	shadowURL := h.qs.shadowQueryURL
+	if strings.HasPrefix(r.URL.Path, "/") {
+		shadowURL += r.URL.Path
+	} else {
+		shadowURL += "/" + r.URL.Path
+	}
+	if r.URL.RawQuery != "" {
+		shadowURL += "?" + r.URL.RawQuery
+	}
+	shadowReq, err := http.NewRequest(r.Method, shadowURL, r.Body)
+	if err != nil {
+		h.logger.Error("Failed to create a shadow http request", zap.Error(err), zap.String("shadowURL", shadowURL))
+		return
+	}
+	shadowReq.Header = r.Header
+	doSend := func() {
+		resp, err := h.qs.client.Do(shadowReq)
+		if err != nil {
+			h.logger.Error("The shadow http request failed", zap.Error(err), zap.String("shadowURL", shadowURL))
+			return
+		}
+		defer resp.Body.Close()
+	}
+	if !h.qs.workerPool.GoWithTimeout(doSend, time.Second * 3) {
+		h.logger.Error("Failed to send shadow query because worker pool can't catch up with the pending requests",
+			zap.Int("workerPoolCapacity", h.qs.workerPool.Size()),
+		)
+	}
 }
 
 func (h *readHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -125,6 +201,8 @@ func (h *readHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		xhttp.WriteError(w, err)
 		return
 	}
+
+	h.sendShadowQuery(r)
 
 	params := request.Params
 	fetchOptions := request.FetchOpts
