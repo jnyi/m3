@@ -98,30 +98,6 @@ var (
 	}
 )
 
-type queryShadowing struct {
-	// This URL doesn't includes the path, "api/v1/query_range" or "api/v1/query".
-	// It shouldn't end with a slash('/').
-	shadowQueryURL string
-	workerPool     xsync.WorkerPool
-	client         *http.Client
-	failedQueryCounter tally.Counter
-	succeededQueryCounter tally.Counter	
-	skippedQueryCounter tally.Counter
-}
-
-func newQueryShadowing(shadowQueryURL string, numWorkers int, scope tally.Scope) *queryShadowing {
-	workerPool := xsync.NewWorkerPool(numWorkers)
-	workerPool.Init()
-	return &queryShadowing{
-		shadowQueryURL: shadowQueryURL,
-		workerPool:     workerPool,
-		client:         &http.Client{},
-		failedQueryCounter: scope.Counter("failed_shadow_query"),
-		succeededQueryCounter: scope.Counter("succeeded_shadow_query"),
-		skippedQueryCounter: scope.Counter("skipped_shadow_query"),
-	}
-}
-
 type readHandler struct {
 	hOpts               options.HandlerOptions
 	scope               tally.Scope
@@ -159,6 +135,43 @@ func newReadHandler(
 	return handler, nil
 }
 
+type queryShadowing struct {
+	// This URL doesn't includes the path, "api/v1/query_range" or "api/v1/query".
+	// It shouldn't end with a slash('/').
+	shadowQueryURL string
+	workerPool     xsync.WorkerPool
+	client         *http.Client
+	failedQueryCounter tally.Counter
+	respondedQueryCounter tally.Counter
+	responded2xxQueryCounter tally.Counter
+	skippedQueryCounter tally.Counter
+}
+
+func getHttpClient() *http.Client {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.MaxIdleConns = 10
+	t.MaxConnsPerHost = 10
+	t.MaxIdleConnsPerHost = 10
+	return &http.Client{
+		Timeout:   4 * 60 * time.Second,
+		Transport: t,
+	}
+}
+
+func newQueryShadowing(shadowQueryURL string, numWorkers int, scope tally.Scope) *queryShadowing {
+	workerPool := xsync.NewWorkerPool(numWorkers)
+	workerPool.Init()
+	return &queryShadowing{
+		shadowQueryURL: shadowQueryURL,
+		workerPool:     workerPool,
+		client:         getHttpClient(),
+		failedQueryCounter: scope.Counter("failed_shadow_query"),
+		respondedQueryCounter: scope.Counter("responded_shadow_query"),
+		responded2xxQueryCounter: scope.Counter("2xx_shadow_query"),
+		skippedQueryCounter: scope.Counter("skipped_shadow_query"),
+	}
+}
+
 func (h* readHandler) sendShadowQuery(r *http.Request) {
 	if (h.qs == nil) {
 		return
@@ -181,6 +194,8 @@ func (h* readHandler) sendShadowQuery(r *http.Request) {
 	}
 	shadowReq.Header = r.Header
 	doSend := func() {
+		// All goroutines sharing the same http client is fine and actually recommended. Under the hood, the http client
+		// use a connection pool to reuse connections.
 		resp, err := h.qs.client.Do(shadowReq)
 		if err != nil {
 			h.logger.Error("The shadow http request failed", zap.Error(err), zap.String("shadowURL", shadowURL))
@@ -202,7 +217,10 @@ func (h* readHandler) sendShadowQuery(r *http.Request) {
 			h.qs.failedQueryCounter.Inc(1)
 			return
 		}
-		h.qs.succeededQueryCounter.Inc(1)
+		h.qs.respondedQueryCounter.Inc(1)
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			h.qs.responded2xxQueryCounter.Inc(1)
+		}
 		h.logger.Debug("Shadow query got a valid response",
 			zap.String("shadowURL", shadowURL),
 			zap.Int("statusCode", resp.StatusCode),
