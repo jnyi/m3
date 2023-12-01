@@ -25,6 +25,7 @@ package prom
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -103,19 +104,22 @@ type queryShadowing struct {
 	shadowQueryURL string
 	workerPool     xsync.WorkerPool
 	client         *http.Client
+	failedQueryCounter tally.Counter
+	succeededQueryCounter tally.Counter	
+	skippedQueryCounter tally.Counter
 }
 
-func newQueryShadowing(shadowQueryURL string, numWorkers int) (*queryShadowing, error) {
-	if numWorkers <= 0 {
-		return nil, errors.New("numWorkers must be positive")
-	}
+func newQueryShadowing(shadowQueryURL string, numWorkers int, scope tally.Scope) *queryShadowing {
 	workerPool := xsync.NewWorkerPool(numWorkers)
 	workerPool.Init()
 	return &queryShadowing{
 		shadowQueryURL: shadowQueryURL,
 		workerPool:     workerPool,
 		client:         &http.Client{},
-	}, nil
+		failedQueryCounter: scope.Counter("failed_shadow_query"),
+		succeededQueryCounter: scope.Counter("succeeded_shadow_query"),
+		skippedQueryCounter: scope.Counter("skipped_shadow_query"),
+	}
 }
 
 type readHandler struct {
@@ -124,7 +128,7 @@ type readHandler struct {
 	logger              *zap.Logger
 	opts                opts
 	returnedDataMetrics native.PromReadReturnedDataMetrics
-	qs  *queryShadowing
+	qs                  *queryShadowing
 }
 
 func newReadHandler(
@@ -136,11 +140,7 @@ func newReadHandler(
 	)
 	var qs *queryShadowing = nil
 	if hOpts.ShadowQueryURL() != "" {
-		var err error
-		qs, err = newQueryShadowing(hOpts.ShadowQueryURL(), hOpts.QueryShadowingWorkers())
-		if err != nil {
-			return nil, err
-		}
+		qs = newQueryShadowing(hOpts.ShadowQueryURL(), hOpts.QueryShadowingWorkers(), scope)
 	}
 	handler := &readHandler{
 		hOpts:               hOpts,
@@ -176,6 +176,7 @@ func (h* readHandler) sendShadowQuery(r *http.Request) {
 	shadowReq, err := http.NewRequest(r.Method, shadowURL, r.Body)
 	if err != nil {
 		h.logger.Error("Failed to create a shadow http request", zap.Error(err), zap.String("shadowURL", shadowURL))
+		h.qs.skippedQueryCounter.Inc(1)
 		return
 	}
 	shadowReq.Header = r.Header
@@ -183,19 +184,36 @@ func (h* readHandler) sendShadowQuery(r *http.Request) {
 		resp, err := h.qs.client.Do(shadowReq)
 		if err != nil {
 			h.logger.Error("The shadow http request failed", zap.Error(err), zap.String("shadowURL", shadowURL))
+			h.qs.failedQueryCounter.Inc(1)
 			return
 		}
-		h.logger.Debug("Shadow query sent successfully",
+		// The response body is thrown away because we only care about request success/failure instead of correctness.
+		// NB: we need to read all the response body and close the body to reuse the connection.
+		// The following comment is from net/http source code
+		// If the returned error is nil, the Response will contain a non-nil 
+		// Body which the user is expected to close. If the Body is not both 
+		// read to EOF and closed, the Client's underlying RoundTripper 
+		// (typically Transport) may not be able to re-use a persistent TCP 
+		// connection to the server for a subsequent "keep-alive" request.
+		_, err = io.ReadAll(resp.Body)
+		defer resp.Body.Close()
+		if err != nil {
+			h.logger.Error("The shadow http response failed to read", zap.Error(err), zap.String("shadowURL", shadowURL))
+			h.qs.failedQueryCounter.Inc(1)
+			return
+		}
+		h.qs.succeededQueryCounter.Inc(1)
+		h.logger.Debug("Shadow query got a valid response",
 			zap.String("shadowURL", shadowURL),
 			zap.Int("statusCode", resp.StatusCode),
 			zap.Int64("responseContentLength", resp.ContentLength),
 		)
-		defer resp.Body.Close()
 	}
 	if !h.qs.workerPool.GoWithTimeout(doSend, time.Second * 3) {
 		h.logger.Error("Failed to send shadow query because worker pool can't catch up with the pending requests",
 			zap.Int("workerPoolCapacity", h.qs.workerPool.Size()),
 		)
+		h.qs.skippedQueryCounter.Inc(1)
 	}
 }
 

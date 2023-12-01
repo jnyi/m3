@@ -1005,5 +1005,5 @@ type QueryShadowingConfiguration struct {
 	// Query paths like "/api/v1/query" are not included.
 	// No trailing slash.
 	ShadowQueryURL string `yaml:"shadowQueryURL"`
-	QueryShadowingWorkers int `yaml:"queryShadowingWorkers"`
+	QueryShadowingWorkers int `yaml:"queryShadowingWorkers" validate:"nonzero,min=1"`
 }
