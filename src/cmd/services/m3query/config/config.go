@@ -212,6 +212,9 @@ type Configuration struct {
 
 	// Debug configuration.
 	Debug config.DebugConfiguration `yaml:"debug"`
+
+	// Query shadowing options.
+	QueryShadowing *QueryShadowingConfiguration `yaml:"queryShadowing"`
 }
 
 // ListenAddressOrDefault returns the listen address or default.
@@ -996,4 +999,11 @@ type MultiProcessConfiguration struct {
 	PerCPU float64 `yaml:"perCPU" validate:"min=0.0, max=1.0"`
 	// GoMaxProcs if set will explicitly set the child GOMAXPROCs env var.
 	GoMaxProcs int `yaml:"goMaxProcs"`
+}
+
+type QueryShadowingConfiguration struct {
+	// Query paths like "/api/v1/query" are not included.
+	// No trailing slash.
+	ShadowQueryURL string `yaml:"shadowQueryURL"`
+	QueryShadowingWorkers int `yaml:"queryShadowingWorkers" validate:"nonzero,min=1"`
 }

@@ -25,6 +25,12 @@ package prom
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/m3db/m3/src/query/api/v1/handler/prometheus/handleroptions"
 	"github.com/m3db/m3/src/query/api/v1/handler/prometheus/native"
 	"github.com/m3db/m3/src/query/api/v1/options"
@@ -35,10 +41,8 @@ import (
 	"github.com/m3db/m3/src/query/storage/prometheus"
 	xerrors "github.com/m3db/m3/src/x/errors"
 	xhttp "github.com/m3db/m3/src/x/net/http"
-	"net/http"
-	"strings"
-	"sync"
 
+	xsync "github.com/m3db/m3/src/x/sync"
 	errs "github.com/pkg/errors"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/promql/parser"
@@ -94,12 +98,37 @@ var (
 	}
 )
 
+type queryShadowing struct {
+	// This URL doesn't includes the path, "api/v1/query_range" or "api/v1/query".
+	// It shouldn't end with a slash('/').
+	shadowQueryURL string
+	workerPool     xsync.WorkerPool
+	client         *http.Client
+	failedQueryCounter tally.Counter
+	succeededQueryCounter tally.Counter	
+	skippedQueryCounter tally.Counter
+}
+
+func newQueryShadowing(shadowQueryURL string, numWorkers int, scope tally.Scope) *queryShadowing {
+	workerPool := xsync.NewWorkerPool(numWorkers)
+	workerPool.Init()
+	return &queryShadowing{
+		shadowQueryURL: shadowQueryURL,
+		workerPool:     workerPool,
+		client:         &http.Client{},
+		failedQueryCounter: scope.Counter("failed_shadow_query"),
+		succeededQueryCounter: scope.Counter("succeeded_shadow_query"),
+		skippedQueryCounter: scope.Counter("skipped_shadow_query"),
+	}
+}
+
 type readHandler struct {
 	hOpts               options.HandlerOptions
 	scope               tally.Scope
 	logger              *zap.Logger
 	opts                opts
 	returnedDataMetrics native.PromReadReturnedDataMetrics
+	qs                  *queryShadowing
 }
 
 func newReadHandler(
@@ -109,13 +138,83 @@ func newReadHandler(
 	scope := hOpts.InstrumentOpts().MetricsScope().Tagged(
 		map[string]string{"handler": "prometheus-read"},
 	)
-	return &readHandler{
+	var qs *queryShadowing = nil
+	if hOpts.ShadowQueryURL() != "" {
+		qs = newQueryShadowing(hOpts.ShadowQueryURL(), hOpts.QueryShadowingWorkers(), scope)
+	}
+	handler := &readHandler{
 		hOpts:               hOpts,
 		opts:                options,
 		scope:               scope,
 		logger:              hOpts.InstrumentOpts().Logger(),
 		returnedDataMetrics: native.NewPromReadReturnedDataMetrics(scope),
-	}, nil
+		qs: 			     qs,
+	}
+	if handler.qs != nil {
+		handler.logger.Info("Query shadowing is enabled",
+		    zap.String("shadowQueryURL", handler.qs.shadowQueryURL),
+			zap.Int("QueryShadowingWorkers", hOpts.QueryShadowingWorkers()),
+		)
+	}
+	return handler, nil
+}
+
+func (h* readHandler) sendShadowQuery(r *http.Request) {
+	if (h.qs == nil) {
+		return
+	}
+	// Forward the requests to h.qs.shadowQueryURL
+	shadowURL := h.qs.shadowQueryURL
+	if strings.HasPrefix(r.URL.Path, "/") {
+		shadowURL += r.URL.Path
+	} else {
+		shadowURL += "/" + r.URL.Path
+	}
+	if r.URL.RawQuery != "" {
+		shadowURL += "?" + r.URL.RawQuery
+	}
+	shadowReq, err := http.NewRequest(r.Method, shadowURL, r.Body)
+	if err != nil {
+		h.logger.Error("Failed to create a shadow http request", zap.Error(err), zap.String("shadowURL", shadowURL))
+		h.qs.skippedQueryCounter.Inc(1)
+		return
+	}
+	shadowReq.Header = r.Header
+	doSend := func() {
+		resp, err := h.qs.client.Do(shadowReq)
+		if err != nil {
+			h.logger.Error("The shadow http request failed", zap.Error(err), zap.String("shadowURL", shadowURL))
+			h.qs.failedQueryCounter.Inc(1)
+			return
+		}
+		// The response body is thrown away because we only care about request success/failure instead of correctness.
+		// NB: we need to read all the response body and close the body to reuse the connection.
+		// The following comment is from net/http source code
+		// If the returned error is nil, the Response will contain a non-nil 
+		// Body which the user is expected to close. If the Body is not both 
+		// read to EOF and closed, the Client's underlying RoundTripper 
+		// (typically Transport) may not be able to re-use a persistent TCP 
+		// connection to the server for a subsequent "keep-alive" request.
+		_, err = io.ReadAll(resp.Body)
+		defer resp.Body.Close()
+		if err != nil {
+			h.logger.Error("The shadow http response failed to read", zap.Error(err), zap.String("shadowURL", shadowURL))
+			h.qs.failedQueryCounter.Inc(1)
+			return
+		}
+		h.qs.succeededQueryCounter.Inc(1)
+		h.logger.Debug("Shadow query got a valid response",
+			zap.String("shadowURL", shadowURL),
+			zap.Int("statusCode", resp.StatusCode),
+			zap.Int64("responseContentLength", resp.ContentLength),
+		)
+	}
+	if !h.qs.workerPool.GoWithTimeout(doSend, time.Second * 3) {
+		h.logger.Error("Failed to send shadow query because worker pool can't catch up with the pending requests",
+			zap.Int("workerPoolCapacity", h.qs.workerPool.Size()),
+		)
+		h.qs.skippedQueryCounter.Inc(1)
+	}
 }
 
 func (h *readHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -125,6 +224,8 @@ func (h *readHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		xhttp.WriteError(w, err)
 		return
 	}
+
+	h.sendShadowQuery(r)
 
 	params := request.Params
 	fetchOptions := request.FetchOpts

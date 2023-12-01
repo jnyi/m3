@@ -282,6 +282,10 @@ type HandlerOptions interface {
 	DefaultLookback() time.Duration
 	// SetDefaultLookback sets the default value of lookback duration.
 	SetDefaultLookback(value time.Duration) HandlerOptions
+
+	ShadowQueryURL() string
+
+	QueryShadowingWorkers() int
 }
 
 // HandlerOptions represents handler options.
@@ -316,6 +320,8 @@ type handlerOptions struct {
 	graphiteRenderRouter              GraphiteRenderRouter
 	graphiteFindRouter                GraphiteFindRouter
 	defaultLookback                   time.Duration
+	shadowQueryURL                    string
+	queryShadowingWorkers             int
 }
 
 // EmptyHandlerOptions returns  default handler options.
@@ -356,7 +362,7 @@ func NewHandlerOptions(
 	if cfg.StoreMetricsType != nil {
 		storeMetricsType = *cfg.StoreMetricsType
 	}
-	return &handlerOptions{
+	opts := &handlerOptions{
 		storage:                           downsamplerAndWriter.Storage(),
 		downsamplerAndWriter:              downsamplerAndWriter,
 		engine:                            engine,
@@ -386,7 +392,12 @@ func NewHandlerOptions(
 		graphiteRenderRouter:              graphiteRenderRouter,
 		graphiteFindRouter:                graphiteFindRouter,
 		defaultLookback:                   defaultLookback,
-	}, nil
+	}
+	if cfg.QueryShadowing != nil {
+		opts.shadowQueryURL = cfg.QueryShadowing.ShadowQueryURL
+		opts.queryShadowingWorkers = cfg.QueryShadowing.QueryShadowingWorkers
+	}
+	return opts, nil
 }
 
 func (o *handlerOptions) CreatedAt() time.Time {
@@ -711,6 +722,14 @@ func (o *handlerOptions) SetDefaultLookback(value time.Duration) HandlerOptions 
 	opts := *o
 	opts.defaultLookback = value
 	return &opts
+}
+
+func (o *handlerOptions) ShadowQueryURL() string {
+	return o.shadowQueryURL
+}
+
+func (o *handlerOptions) QueryShadowingWorkers() int {
+	return o.queryShadowingWorkers
 }
 
 // KVStoreProtoParser parses protobuf messages based off specific keys.
