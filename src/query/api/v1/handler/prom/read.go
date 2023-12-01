@@ -185,6 +185,11 @@ func (h* readHandler) sendShadowQuery(r *http.Request) {
 			h.logger.Error("The shadow http request failed", zap.Error(err), zap.String("shadowURL", shadowURL))
 			return
 		}
+		h.logger.Debug("Shadow query sent successfully",
+			zap.String("shadowURL", shadowURL),
+			zap.Int("statusCode", resp.StatusCode),
+			zap.Int64("responseContentLength", resp.ContentLength),
+		)
 		defer resp.Body.Close()
 	}
 	if !h.qs.workerPool.GoWithTimeout(doSend, time.Second * 3) {
