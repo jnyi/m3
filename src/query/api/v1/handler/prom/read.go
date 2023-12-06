@@ -220,12 +220,18 @@ func (h* readHandler) sendShadowQuery(r *http.Request) {
 		h.qs.respondedQueryCounter.Inc(1)
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			h.qs.responded2xxQueryCounter.Inc(1)
+			h.logger.Debug("Shadow query got a 2xx response",
+				zap.String("shadowURL", shadowURL),
+				zap.Int("statusCode", resp.StatusCode),
+				zap.Int64("responseContentLength", resp.ContentLength),
+			)
+		} else {
+			h.logger.Error("Shadow query got a non-2xx response",
+				zap.String("shadowURL", shadowURL),
+				zap.Int("statusCode", resp.StatusCode),
+				zap.Int64("responseContentLength", resp.ContentLength),
+			)
 		}
-		h.logger.Debug("Shadow query got a valid response",
-			zap.String("shadowURL", shadowURL),
-			zap.Int("statusCode", resp.StatusCode),
-			zap.Int64("responseContentLength", resp.ContentLength),
-		)
 	}
 	if !h.qs.workerPool.GoWithTimeout(doSend, time.Second * 3) {
 		h.logger.Error("Failed to send shadow query because worker pool can't catch up with the pending requests",
