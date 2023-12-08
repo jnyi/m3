@@ -153,7 +153,7 @@ func getHttpClient() *http.Client {
 	t.MaxConnsPerHost = 10
 	t.MaxIdleConnsPerHost = 10
 	return &http.Client{
-		Timeout:   4 * 60 * time.Second,
+		Timeout:   8 * 60 * time.Second,
 		Transport: t,
 	}
 }
