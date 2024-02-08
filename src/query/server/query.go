@@ -507,7 +507,6 @@ func Run(runOpts RunOptions) RunResult {
 		if err != nil {
 			logger.Fatal("unable to setup m3db backend", zap.Error(err))
 		}
-
 		defer cleanup()
 		if cfg.Backend == config.DualStorageType {
 			backendStorage = composite.Compose(logger, m3Storage, promRemoteStorage)
