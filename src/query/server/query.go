@@ -509,7 +509,7 @@ func Run(runOpts RunOptions) RunResult {
 		}
 
 		defer cleanup()
-		if (cfg.Backend == config.DualStorageType) {
+		if cfg.Backend == config.DualStorageType {
 			backendStorage = composite.Compose(logger, m3Storage, promRemoteStorage)
 		} else {
 			backendStorage = m3Storage
