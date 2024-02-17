@@ -148,8 +148,9 @@ func NewStorage(opts Options) (storage.Storage, error) {
 			if _, ok := queriesWithFixedTenants[t]; !ok {
 				queriesWithFixedTenants[t] = NewWriteQueue(t, opts.queueSize)
 			} else {
-				opts.logger.Error("found duplicated tenant in rules",
+				opts.logger.Info("Multiple rules attribute to the same tenant. That's normal.",
 					zap.String("tenant", t.name),
+					zap.String("filter", rule.Filter.String()),
 					zap.Any("attr", t.attr))
 			}
 		}
