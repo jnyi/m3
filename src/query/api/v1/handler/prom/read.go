@@ -186,7 +186,13 @@ func (h* readHandler) sendShadowQuery(r *http.Request) {
 	if r.URL.RawQuery != "" {
 		shadowURL += "?" + r.URL.RawQuery
 	}
-	shadowReq, err := http.NewRequest(r.Method, shadowURL, r.Body)
+	var requestBody io.Reader = r.Body
+	if r.Method == "POST" {
+		// If it's a POST request, r.Body has already been read and parsed into r.PostForm.
+		// r.Body can't be parsed twice.
+		requestBody = strings.NewReader(r.PostForm.Encode())
+	}
+	shadowReq, err := http.NewRequest(r.Method, shadowURL, requestBody)
 	if err != nil {
 		h.logger.Error("Failed to create a shadow http request", zap.Error(err), zap.String("shadowURL", shadowURL))
 		h.qs.skippedQueryCounter.Inc(1)
