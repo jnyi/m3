@@ -131,6 +131,7 @@ func NewOptions(
 		logger:        logger,
 		queueSize:     cfg.QueueSize,
 		poolSize:      cfg.PoolSize,
+		retries:       cfg.Retries,
 		tenantDefault: cfg.TenantDefault,
 		tenantRules:   tenantRules,
 		tickDuration:  cfg.TickDuration,
