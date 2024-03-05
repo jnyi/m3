@@ -43,6 +43,7 @@ type Options struct {
 	logger      *zap.Logger
 	queueSize   int
 	poolSize    int
+	retries     int
 
 	tenantDefault string
 	tenantRules   []TenantRule

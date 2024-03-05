@@ -854,6 +854,7 @@ type PrometheusRemoteBackendConfiguration struct {
 	MaxIdleConns    *int                                           `yaml:"maxIdleConns"`
 	QueueSize       int                                            `yaml:"queueSize" validate:"min=1"`
 	PoolSize        int                                            `yaml:"poolSize" validate:"min=1"`
+	Retries         int                                            `yaml:"retries" validate:"min=0"`
 	TickDuration    *time.Duration                                 `yaml:"tickDuration"`
 }
 

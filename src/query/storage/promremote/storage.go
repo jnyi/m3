@@ -115,6 +115,9 @@ func validateOptions(opts Options) error {
 	if opts.queueSize < 1 {
 		return errors.New("queueSize must be greater than 0 to batch writes")
 	}
+	if opts.retries < 0 {
+		return errors.New("retries must be greater than or equal to 0")
+	}
 	if opts.tickDuration == nil {
 		return errors.New("tickDuration must be set")
 	}
@@ -388,30 +391,42 @@ func (p *promStorage) write(
 	req.Header.Set(endpoint.tenantHeader, tenant.name)
 
 	start := time.Now()
-	resp, err := p.client.Do(req)
+	status := 0
+	backoff := 100 * time.Millisecond
+	for i := p.opts.retries; i >= 0; i-- {
+		status, err = p.doRequest(req)
+		if err == nil || status == http.StatusConflict {
+			// 409 is a valid status code due to RWA dual scrape issue
+			// see https://docs.google.com/document/d/19exXqcXxtc37jbdFbztt97-I2S5A873__sAMOGFWD6Q/edit?tab=t.0#heading=h.8kznn96p9jea
+			break
+		}
+		time.Sleep(backoff)
+		backoff *= 2
+	}
 	methodDuration := time.Since(start)
+	metrics.RecordResponse(status, methodDuration)
+	return err
+}
+
+func (p *promStorage) doRequest(req *http.Request) (int, error) {
+	resp, err := p.client.Do(req)
 	if err != nil {
-		metrics.RecordResponse(503, methodDuration)
-		return err
+		return http.StatusServiceUnavailable, fmt.Errorf("503 error to connect to remote endpoint: %v", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	metrics.RecordResponse(resp.StatusCode, methodDuration)
 	if resp.StatusCode/100 != 2 {
 		response, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
 			p.logger.Error("error reading body", zap.Error(err))
 			response = errorReadingBody
 		}
-		genericError := fmt.Errorf(
-			"expected status code 2XX: actual=%v, address=%v, resp=%s",
-			resp.StatusCode, endpoint.address, response,
-		)
+		genericError := fmt.Errorf("expected status code 2XX: actual=%v,  resp=%s", resp.StatusCode, response)
 		if resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
-			return xerrors.NewInvalidParamsError(genericError)
+			return resp.StatusCode, xerrors.NewInvalidParamsError(genericError)
 		}
-		return genericError
+		return resp.StatusCode, genericError
 	}
-	return nil
+	return resp.StatusCode, nil
 }
 
 func initEndpointMetrics(endpoints []EndpointOptions, scope tally.Scope) map[string]*instrument.HttpMetrics {
