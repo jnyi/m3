@@ -41,11 +41,12 @@ const (
 	Increase
 	Add
 	Reset
+	Increasev2
 )
 
 const (
 	_minValidTransformationType = Absolute
-	_maxValidTransformationType = Reset
+	_maxValidTransformationType = Increasev2
 )
 
 // IsValid checks if the transformation type is valid.
@@ -265,6 +266,7 @@ var (
 	binaryTransforms = map[Type]func() BinaryTransform{
 		PerSecond: transformPerSecond,
 		Increase:  transformIncrease,
+		Increasev2:  transformIncreasev2,
 	}
 	unaryMultiOutputTransforms = map[Type]func() UnaryMultiOutputTransform{
 		Reset: transformReset,

@@ -49,12 +49,13 @@ const _ = proto.GoGoProtoPackageIsVersion2 // please upgrade the proto package
 type TransformationType int32
 
 const (
-	TransformationType_UNKNOWN   TransformationType = 0
-	TransformationType_ABSOLUTE  TransformationType = 1
-	TransformationType_PERSECOND TransformationType = 2
-	TransformationType_INCREASE  TransformationType = 3
-	TransformationType_ADD       TransformationType = 4
-	TransformationType_RESET     TransformationType = 5
+	TransformationType_UNKNOWN     TransformationType = 0
+	TransformationType_ABSOLUTE    TransformationType = 1
+	TransformationType_PERSECOND   TransformationType = 2
+	TransformationType_INCREASE    TransformationType = 3
+	TransformationType_ADD         TransformationType = 4
+	TransformationType_RESET       TransformationType = 5
+	TransformationType_INCREASEV2  TransformationType = 6
 )
 
 var TransformationType_name = map[int32]string{
@@ -64,14 +65,16 @@ var TransformationType_name = map[int32]string{
 	3: "INCREASE",
 	4: "ADD",
 	5: "RESET",
+	6: "INCREASEV2",
 }
 var TransformationType_value = map[string]int32{
-	"UNKNOWN":   0,
-	"ABSOLUTE":  1,
-	"PERSECOND": 2,
-	"INCREASE":  3,
-	"ADD":       4,
-	"RESET":     5,
+	"UNKNOWN":     0,
+	"ABSOLUTE":    1,
+	"PERSECOND":   2,
+	"INCREASE":    3,
+	"ADD":         4,
+	"RESET":       5,
+	"INCREASEV2":  6,
 }
 
 func (x TransformationType) String() string {
