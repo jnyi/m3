@@ -79,3 +79,30 @@ func TestPerSecond(t *testing.T) {
 		}
 	}
 }
+
+func TestIncrease(t *testing.T) {
+	inputs := []struct {
+		prev        Datapoint
+		curr        Datapoint
+		expected    Datapoint
+		expected2   Datapoint
+	}{
+		{
+			prev:      Datapoint{TimeNanos: time.Unix(1230, 0).UnixNano(), Value: 25},
+			curr:      Datapoint{TimeNanos: time.Unix(1240, 0).UnixNano(), Value: 30},
+			expected:  Datapoint{TimeNanos: time.Unix(1240, 0).UnixNano(), Value: 5},
+			expected2: Datapoint{TimeNanos: time.Unix(1240, 0).UnixNano(), Value: 5},
+		},
+		{
+			prev:        Datapoint{TimeNanos: time.Unix(1230, 0).UnixNano(), Value: math.NaN()},
+			curr:        Datapoint{TimeNanos: time.Unix(1240, 0).UnixNano(), Value: 20},
+			expected:    Datapoint{TimeNanos: time.Unix(1240, 0).UnixNano(), Value: 20},
+			expected2:   Datapoint{TimeNanos: time.Unix(1240, 0).UnixNano(), Value: 0},
+		},
+	}
+
+	for _, input := range inputs {
+		require.Equal(t, input.expected, increase(input.prev, input.curr, FeatureFlags{}))
+		require.Equal(t, input.expected2, increasev2(input.prev, input.curr, FeatureFlags{}))
+	}
+}

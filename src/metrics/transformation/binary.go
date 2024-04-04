@@ -34,6 +34,7 @@ var (
 	// taking reference to it each time when converting to iface).
 	transformPerSecondFn = BinaryTransformFn(perSecond)
 	transformIncreaseFn  = BinaryTransformFn(increase)
+	transformIncreasev2Fn  = BinaryTransformFn(increasev2)
 )
 
 func transformPerSecond() BinaryTransform {
@@ -62,6 +63,11 @@ func transformIncrease() BinaryTransform {
 	return transformIncreaseFn
 }
 
+func transformIncreasev2() BinaryTransform {
+	return transformIncreasev2Fn
+}
+
+
 // increase computes the difference between consecutive datapoints, unlike
 // perSecond it does not account for the time interval between the values.
 // Note:
@@ -85,4 +91,12 @@ func increase(prev, curr Datapoint, _ FeatureFlags) Datapoint {
 		return emptyDatapoint
 	}
 	return Datapoint{TimeNanos: curr.TimeNanos, Value: diff}
+}
+
+// increasev2 treats a NaN prev as curr. That's the only difference between increase and increasev2.
+func increasev2(prev, curr Datapoint, ff FeatureFlags) Datapoint {
+	if math.IsNaN(prev.Value) {
+		prev.Value = curr.Value
+	}
+	return increase(prev, curr, ff)
 }

@@ -31,4 +31,5 @@ enum TransformationType {
   INCREASE = 3;
   ADD = 4;
   RESET = 5;
+  INCREASEV2 = 6;
 }
