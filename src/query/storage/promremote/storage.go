@@ -408,9 +408,10 @@ func (p *promStorage) write(
 	backoff := 100 * time.Millisecond
 	for i := p.opts.retries; i >= 0; i-- {
 		status, err = p.doRequest(req)
-		if err == nil || status == http.StatusConflict {
+		if err == nil || status == http.StatusConflict || status == http.StatusTooManyRequests {
 			// 409 is a valid status code due to RWA dual scrape issue
 			// see https://docs.google.com/document/d/19exXqcXxtc37jbdFbztt97-I2S5A873__sAMOGFWD6Q/edit?tab=t.0#heading=h.8kznn96p9jea
+			// we don't want to retry on 429 if the tenant is already over the active series limit for cascading failures
 			err = nil
 			break
 		}
