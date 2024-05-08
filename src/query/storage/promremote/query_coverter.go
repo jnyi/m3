@@ -21,6 +21,7 @@
 package promremote
 
 import (
+	"sort"
 	"time"
 
 	"github.com/m3db/m3/src/query/storage"
@@ -70,6 +71,11 @@ func convertWriteQuery(queries []*storage.WriteQuery) (*prompb.WriteRequest, int
 				Timestamp: dp.Timestamp.ToNormalizedTime(time.Millisecond),
 			})
 		}
+		// Need to make sure the samples meet remote write spec:
+		// https://prometheus.io/docs/concepts/remote_write_spec/#ordering
+		sort.Slice(samples, func(i, j int) bool {
+			return samples[i].Timestamp < samples[j].Timestamp
+		})
 		ts = append(ts, prompb.TimeSeries{
 			Labels:  labels,
 			Samples: samples,
