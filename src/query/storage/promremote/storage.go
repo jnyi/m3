@@ -159,6 +159,7 @@ func NewStorage(opts Options) (storage.Storage, error) {
 		client:          client,
 		endpointMetrics: initEndpointMetrics(opts.endpoints, scope),
 		scope:           scope,
+		samplesWritten:  scope.Counter("samples_written"),
 		droppedWrites:   scope.Counter("dropped_writes"),
 		dupWrites:       scope.Counter("duplicate_writes"),
 		ingestorWrites:  scope.Counter("ingestor_writes"),
@@ -167,6 +168,7 @@ func NewStorage(opts Options) (storage.Storage, error) {
 		batchWrite:      scope.Counter("batch_write"),
 		batchWriteErr:   scope.Counter("batch_write_err"),
 		tickWrite:       scope.Counter("tick_write"),
+		retryWrite:      scope.Counter("retry_write"),
 		logger:          opts.logger,
 		queryQueue:      make(chan *storage.WriteQuery, opts.queueSize),
 		workerPool:      xsync.NewWorkerPool(opts.poolSize),
@@ -187,6 +189,7 @@ type promStorage struct {
 	client          *http.Client
 	endpointMetrics map[string]*instrument.HttpMetrics
 	scope           tally.Scope
+	samplesWritten  tally.Counter
 	droppedWrites   tally.Counter
 	enqueued        tally.Counter
 	enqueueErr      tally.Counter
@@ -195,6 +198,7 @@ type promStorage struct {
 	batchWrite      tally.Counter
 	batchWriteErr   tally.Counter
 	tickWrite       tally.Counter
+	retryWrite      tally.Counter
 	logger          *zap.Logger
 	queryQueue      chan *storage.WriteQuery
 	workerPool      xsync.WorkerPool
@@ -216,17 +220,10 @@ func (p *promStorage) getTenant(query *storage.WriteQuery) tenantKey {
 	return tenantKey(p.opts.tenantDefault)
 }
 
-func (p *promStorage) flushPendingQueues(minQueueSizeToFlush int, ctx context.Context, wg *sync.WaitGroup) int {
+func (p *promStorage) flushPendingQueues(ctx context.Context, wg *sync.WaitGroup) int {
 	numWrites := 0
-	for t, queue := range p.pendingQuery {
+	for _, queue := range p.pendingQuery {
 		if queue.Len() == 0 {
-			continue
-		}
-		if queue.Len() < minQueueSizeToFlush {
-			p.logger.Warn("don't do tick flush for small batch",
-				zap.String("tenant", string(t)),
-				zap.Int("size", queue.Len()),
-				zap.Int("queue size", p.opts.queueSize))
 			continue
 		}
 		numWrites += queue.Len()
@@ -270,7 +267,7 @@ func (p *promStorage) writeLoop() {
 				continue
 			}
 			if dataBatch := p.pendingQuery[t].Add(query); dataBatch != nil {
-				p.batchWrite.Inc(int64(len(dataBatch)))
+				p.batchWrite.Inc(1)
 				wg.Add(1)
 				p.workerPool.Go(func() {
 					defer wg.Done()
@@ -282,12 +279,12 @@ func (p *promStorage) writeLoop() {
 				})
 			}
 		case <-ticker.C:
-			p.flushPendingQueues(p.opts.queueSize/10, ctxForWrites, &wg)
+			p.flushPendingQueues(ctxForWrites, &wg)
 		}
 	}
 	// At this point, `p.queryQueue` is drained and closed.
 	p.logger.Info("Draining pending per-tenant write queues")
-	numWrites := p.flushPendingQueues(0, ctxForWrites, &wg)
+	numWrites := p.flushPendingQueues(ctxForWrites, &wg)
 	p.logger.Info("Waiting for all async pending writes to finish",
 		zap.Int("numWrites", numWrites))
 	// Block until all pending writes are flushed because we don't want to lose any data.
@@ -326,16 +323,16 @@ func deepCopy(queryOpt storage.WriteQueryOptions) storage.WriteQueryOptions {
 	cp.Tags.Tags = make([]models.Tag, 0, len(queryOpt.Tags.Tags))
 	cp.Tags.Tags = append(cp.Tags.Tags, queryOpt.Tags.Tags...)
 	/*
-	// In case deeper copying is needed
-	for i, tag := range queryOpt.Tags.Tags {
-		tagCopy := models.Tag{
-			Name:  make([]byte, len(tag.Name)),
-			Value:  make([]byte, len(tag.Value)),
+		// In case deeper copying is needed
+		for i, tag := range queryOpt.Tags.Tags {
+			tagCopy := models.Tag{
+				Name:  make([]byte, len(tag.Name)),
+				Value:  make([]byte, len(tag.Value)),
+			}
+			copy(tagCopy.Name, tag.Name)
+			copy(tagCopy.Value, tag.Value)
+			cp.Tags.Tags[i] = tagCopy
 		}
-		copy(tagCopy.Name, tag.Name)
-		copy(tagCopy.Value, tag.Value)
-		cp.Tags.Tags[i] = tagCopy
-	}
 	*/
 	return cp
 }
@@ -376,33 +373,10 @@ func (p *promStorage) writeBatch(ctx context.Context, tenant tenantKey, queries 
 			zap.String("tenant", string(tenant)),
 			zap.Int("size", len(queries)))
 	}
-	// TODO: remove this double check once the bug is confirmed to be fixed.
-	{
-		correctWq := make([]*storage.WriteQuery, 0, len(queries))
-		wrongTenants := 0
-		for _, wq := range queries {
-			correctTenant := p.getTenant(wq)
-			if correctTenant == tenant {
-				correctWq = append(correctWq, wq)
-			} else {
-				wrongTenants++
-				if rand.Float32() < 0.01 {
-					p.logger.Error("dropping a write because of a wrong tenant",
-						zap.String("expected_tenant", string(correctTenant)),
-						zap.String("actual_tenant", string(tenant)),
-						zap.String("time_series", wq.String()),
-						zap.Bool("from_ingestor", wq.Options().FromIngestor),
-					)
-				}
-			}
-		}
-		p.wrongTenant.Inc(int64(wrongTenants))
-		queries = correctWq
-	}
 	if len(queries) == 0 {
 		return nil
 	}
-	encoded, err := convertAndEncodeWriteQuery(queries)
+	encoded, sampleCount, err := convertAndEncodeWriteQuery(queries)
 	if err != nil {
 		p.batchWriteErr.Inc(1)
 		return err
@@ -415,6 +389,8 @@ func (p *promStorage) writeBatch(ctx context.Context, tenant tenantKey, queries 
 	err = p.write(ctx, metrics, endpoint, tenant, bytes.NewReader(encoded))
 	if err != nil {
 		p.batchWriteErr.Inc(1)
+	} else {
+		p.samplesWritten.Inc(int64(sampleCount))
 	}
 	return err
 }
@@ -482,6 +458,7 @@ func (p *promStorage) write(
 			err = nil
 			break
 		}
+		p.retryWrite.Inc(1)
 		time.Sleep(backoff)
 		backoff *= 2
 	}
