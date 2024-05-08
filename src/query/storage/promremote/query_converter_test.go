@@ -40,6 +40,14 @@ func TestWriteQueryConverter(t *testing.T) {
 		Timestamp: now,
 		Value:     42,
 	}
+	dp1 := ts.Datapoint{
+		Timestamp: now.Add(-time.Minute),
+		Value:     3,
+	}
+	dp2 := ts.Datapoint{
+		Timestamp: now.Add(time.Minute),
+		Value:     55,
+	}
 	tag := models.Tag{
 		Name:  []byte("test_tag_name"),
 		Value: []byte("test_tag_value"),
@@ -57,6 +65,7 @@ func TestWriteQueryConverter(t *testing.T) {
 		name     string
 		input    storage.WriteQueryOptions
 		expected *prompb.WriteRequest
+		samples  int
 	}{
 		{
 			name: "single datapoint",
@@ -72,6 +81,7 @@ func TestWriteQueryConverter(t *testing.T) {
 				Labels:  []prompb.Label{convertedToLabel},
 				Samples: []prompb.Sample{covertedToSample},
 			}),
+			samples: 1,
 		},
 		{
 			name: "duplicate tags and samples",
@@ -87,6 +97,27 @@ func TestWriteQueryConverter(t *testing.T) {
 				Labels:  []prompb.Label{convertedToLabel, convertedToLabel},
 				Samples: []prompb.Sample{covertedToSample, covertedToSample},
 			}),
+			samples: 2,
+		},
+		{
+			name: "out of order samples",
+			input: storage.WriteQueryOptions{
+				Tags: models.Tags{
+					Opts: models.NewTagOptions(),
+					Tags: []models.Tag{tag},
+				},
+				Datapoints: ts.Datapoints{dp, dp1, dp2}, // out of order in timestamp
+				Unit:       xtime.Millisecond,
+			},
+			expected: promWriteRequest(prompb.TimeSeries{
+				Labels: []prompb.Label{convertedToLabel},
+				Samples: []prompb.Sample{
+					{Timestamp: dp1.Timestamp.ToNormalizedTime(time.Millisecond), Value: dp1.Value},
+					{Timestamp: dp.Timestamp.ToNormalizedTime(time.Millisecond), Value: dp.Value},
+					{Timestamp: dp2.Timestamp.ToNormalizedTime(time.Millisecond), Value: dp2.Value},
+				},
+			}),
+			samples: 3,
 		},
 		{
 			name: "overrides metric name tag",
@@ -105,6 +136,7 @@ func TestWriteQueryConverter(t *testing.T) {
 				}},
 				Samples: []prompb.Sample{covertedToSample},
 			}),
+			samples: 1,
 		},
 		{
 			name: "overrides bucket name name tag",
@@ -123,6 +155,7 @@ func TestWriteQueryConverter(t *testing.T) {
 				}},
 				Samples: []prompb.Sample{covertedToSample},
 			}),
+			samples: 1,
 		},
 	}
 
@@ -131,19 +164,24 @@ func TestWriteQueryConverter(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			q, err := storage.NewWriteQuery(tc.input)
 			require.NoError(t, err)
-			assert.Equal(t, tc.expected, convertWriteQuery([]*storage.WriteQuery{q}))
+			r, samples := convertWriteQuery([]*storage.WriteQuery{q})
+			assert.Equal(t, tc.expected, r)
+			assert.Equal(t, tc.samples, samples)
 		})
 	}
 }
 
 func TestConvertQueryNil(t *testing.T) {
-	assert.Nil(t, convertWriteQuery(nil))
+	r, samples := convertWriteQuery(nil)
+	assert.Nil(t, r)
+	assert.Equal(t, 0, samples)
 }
 
 func TestEncodeWriteQuery(t *testing.T) {
-	data, err := convertAndEncodeWriteQuery(nil)
+	data, samples, err := convertAndEncodeWriteQuery(nil)
 	require.Error(t, err)
 	assert.Len(t, data, 0)
+	assert.Equal(t, 0, samples)
 	assert.Contains(t, err.Error(), "received nil query")
 }
 

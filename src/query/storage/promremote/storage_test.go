@@ -44,14 +44,13 @@ import (
 )
 
 var (
-	logger, _ = zap.NewDevelopment()
-	scope     = tally.NewTestScope("test_scope", map[string]string{})
-
+	logger, _    = zap.NewDevelopment()
 	tickDuration = time.Duration(100) * time.Millisecond
 )
 
 func TestWrite(t *testing.T) {
 	fakeProm := promremotetest.NewServer(t)
+	scope := tally.NewTestScope("test_scope", map[string]string{})
 	defer fakeProm.Close()
 	promStorage, err := NewStorage(Options{
 		endpoints:     []EndpointOptions{{name: "testEndpoint", address: fakeProm.WriteAddr(), tenantHeader: "TENANT"}},
@@ -135,13 +134,14 @@ func TestWrite(t *testing.T) {
 
 func TestDataRace(t *testing.T) {
 	fakeProm := promremotetest.NewServer(t)
+	scope := tally.NewTestScope("data_race", map[string]string{})
 	defer fakeProm.Close()
 	promStorage, err := NewStorage(Options{
 		endpoints:     []EndpointOptions{{name: "testEndpoint", address: fakeProm.WriteAddr(), tenantHeader: "TENANT"}},
 		scope:         scope,
 		logger:        logger,
-		poolSize:      2,
-		queueSize:     10,
+		poolSize:      10,
+		queueSize:     100,
 		tenantDefault: "unknown",
 		tickDuration:  ptrDuration(tickDuration),
 	})
@@ -160,7 +160,7 @@ func TestDataRace(t *testing.T) {
 			Timestamp: now,
 			Value:     42,
 		}},
-		Unit: xtime.Millisecond,
+		Unit:         xtime.Millisecond,
 		FromIngestor: true,
 	})
 	require.NoError(t, err)
@@ -172,14 +172,10 @@ func TestDataRace(t *testing.T) {
 	wq.Reset(storage.WriteQueryOptions{
 		Tags: models.Tags{
 			Opts: models.NewTagOptions(),
-			Tags: []models.Tag{{
-				Name:  []byte("new_tag_name"),
-				Value: []byte("new_tag_value"),
+			Tags: []models.Tag{
+				{Name: []byte("new_tag_name"), Value: []byte("new_tag_value")},
+				{Name: []byte("new_tag_name2"), Value: []byte("new_tag_value2")},
 			},
-			{
-				Name:  []byte("new_tag_name2"),
-				Value: []byte("new_tag_value2"),
-			}},
 		},
 		Datapoints: ts.Datapoints{{
 			Timestamp: now,
@@ -210,12 +206,13 @@ func TestDataRace(t *testing.T) {
 	assert.Equal(t, expectedSample, promWrite.Timeseries[0].Samples[0])
 
 	tallytest.AssertCounterValue(
-		t, 1, scope.Snapshot(), "test_scope.prom_remote_storage.write.total",
+		t, 1, scope.Snapshot(), "data_race.prom_remote_storage.write.total",
 		map[string]string{"endpoint_name": "testEndpoint", "code": "200"},
 	)
 }
 
 func TestWriteBasedOnRetention(t *testing.T) {
+	scope := tally.NewTestScope("test_scope", map[string]string{})
 	promShortRetention := promremotetest.NewServer(t)
 	defer promShortRetention.Close()
 	promMediumRetention := promremotetest.NewServer(t)

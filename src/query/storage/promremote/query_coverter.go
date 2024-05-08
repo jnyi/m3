@@ -21,6 +21,7 @@
 package promremote
 
 import (
+	"sort"
 	"time"
 
 	"github.com/m3db/m3/src/query/storage"
@@ -32,23 +33,24 @@ import (
 
 var errNilQuery = errors.New("received nil query or no samples in query")
 
-func convertAndEncodeWriteQuery(queries []*storage.WriteQuery) ([]byte, error) {
-	promQuery := convertWriteQuery(queries)
+func convertAndEncodeWriteQuery(queries []*storage.WriteQuery) ([]byte, int, error) {
+	promQuery, samples := convertWriteQuery(queries)
 	if promQuery == nil || len(promQuery.Timeseries) == 0 {
-		return []byte{}, errNilQuery
+		return []byte{}, samples, errNilQuery
 	}
 	data, err := promQuery.Marshal()
 	if err != nil {
-		return nil, err
+		return nil, samples, err
 	}
-	return snappy.Encode(nil, data), nil
+	return snappy.Encode(nil, data), samples, nil
 }
 
-func convertWriteQuery(queries []*storage.WriteQuery) *prompb.WriteRequest {
+func convertWriteQuery(queries []*storage.WriteQuery) (*prompb.WriteRequest, int) {
 	if queries == nil || len(queries) == 0 {
-		return nil
+		return nil, 0
 	}
 	ts := make([]prompb.TimeSeries, 0, len(queries))
+	sampleCount := 0
 	for _, query := range queries {
 		if query == nil || len(query.Datapoints()) == 0 {
 			continue
@@ -61,7 +63,7 @@ func convertWriteQuery(queries []*storage.WriteQuery) *prompb.WriteRequest {
 				Value: string(tag.Value),
 			})
 		}
-
+		sampleCount += len(query.Datapoints())
 		samples := make([]prompb.Sample, 0, len(query.Datapoints()))
 		for _, dp := range query.Datapoints() {
 			samples = append(samples, prompb.Sample{
@@ -69,6 +71,11 @@ func convertWriteQuery(queries []*storage.WriteQuery) *prompb.WriteRequest {
 				Timestamp: dp.Timestamp.ToNormalizedTime(time.Millisecond),
 			})
 		}
+		// Need to make sure the samples meet remote write spec:
+		// https://prometheus.io/docs/concepts/remote_write_spec/#ordering
+		sort.Slice(samples, func(i, j int) bool {
+			return samples[i].Timestamp < samples[j].Timestamp
+		})
 		ts = append(ts, prompb.TimeSeries{
 			Labels:  labels,
 			Samples: samples,
@@ -77,5 +84,5 @@ func convertWriteQuery(queries []*storage.WriteQuery) *prompb.WriteRequest {
 
 	return &prompb.WriteRequest{
 		Timeseries: ts,
-	}
+	}, sampleCount
 }
