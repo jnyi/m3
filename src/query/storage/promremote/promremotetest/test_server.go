@@ -36,6 +36,7 @@ import (
 // TestPromServer is a fake http server handling prometheus remote write. Intended for test usage.
 type TestPromServer struct {
 	mu               sync.Mutex
+	totalSamples     int
 	lastWriteRequest *prompb.WriteRequest
 	respErr          *respErr
 	t                *testing.T
@@ -71,10 +72,20 @@ func (s *TestPromServer) handleWrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.lastWriteRequest = req
+	for _, ts := range req.Timeseries {
+		s.totalSamples += len(ts.Samples)
+	}
 	if s.respErr != nil {
 		http.Error(w, s.respErr.error, s.respErr.status)
 		return
 	}
+}
+
+// GetTotalSamples returns total number of samples received.
+func (s *TestPromServer) GetTotalSamples() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.totalSamples
 }
 
 // GetLastWriteRequest returns the last recorded write request.

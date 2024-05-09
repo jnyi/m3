@@ -22,6 +22,8 @@ package promremote
 
 import (
 	"context"
+	"fmt"
+	"github.com/m3db/m3/src/metrics/filters"
 	"io"
 	"math/rand"
 	"net/http"
@@ -357,6 +359,11 @@ func TestWriteBasedOnRetention(t *testing.T) {
 	})
 }
 
+func TestLoad(t *testing.T) {
+	LoadTestPromRemoteStorage(t, 5, 18, 100)
+	LoadTestPromRemoteStorage(t, 30, 200, 1000)
+}
+
 func TestErrorHandling(t *testing.T) {
 	svr := promremotetest.NewServer(t)
 	defer svr.Close()
@@ -476,4 +483,75 @@ func getWriteRequest(promServer *promremotetest.TestPromServer) *prompb.WriteReq
 		wq = promServer.GetLastWriteRequest()
 	}
 	return wq
+}
+
+func LoadTestPromRemoteStorage(t *testing.T, numTenants, numSeries, numSamples int) {
+	fakeProm := promremotetest.NewServer(t)
+	defer fakeProm.Close()
+	scope := tally.NewTestScope("test_scope", map[string]string{})
+	defer verifyMetrics(t, scope)
+	labelName := "test_tag_name"
+	labelValues := make([][]byte, numSeries)
+	for i := 0; i < numSeries; i++ {
+		labelValues[i] = []byte(fmt.Sprintf("test_tag_value_%d", i))
+	}
+	tenantRules := make([]TenantRule, numTenants)
+	for i := 0; i < numTenants; i++ {
+		filterValues, _ := filters.ValidateTagsFilter(fmt.Sprintf("%s:%s", labelName, labelValues[i%numSeries]))
+		filter, _ := filters.NewTagsFilter(filterValues, filters.Conjunction, filters.TagsFilterOptions{})
+		tenantRules[i] = TenantRule{
+			Tenant: fmt.Sprintf("tenant_%d", i),
+			Filter: filter,
+		}
+	}
+	promStorage, err := NewStorage(Options{
+		endpoints:     []EndpointOptions{{name: "testEndpoint", address: fakeProm.WriteAddr(), tenantHeader: "TENANT"}},
+		scope:         scope,
+		logger:        logger,
+		poolSize:      10,
+		queueSize:     numSeries,
+		tenantDefault: "unknown",
+		tickDuration:  ptrDuration(tickDuration),
+		tenantRules:   tenantRules,
+	})
+	require.NoError(t, err)
+
+	totalSamples := 0
+	for i := 0; i < numSamples; i++ {
+		datapoints := make(ts.Datapoints, 0, rand.Intn(numSeries))
+		totalSamples += len(datapoints)
+		for j := 0; j < len(datapoints); j++ {
+			datapoints = append(datapoints, ts.Datapoint{
+				Timestamp: xtime.Now(),
+				Value:     rand.Float64(),
+			})
+		}
+		wq, _ := storage.NewWriteQuery(storage.WriteQueryOptions{
+			Tags: models.Tags{
+				Opts: models.NewTagOptions(),
+				Tags: []models.Tag{{
+					Name:  []byte(labelName),
+					Value: labelValues[rand.Intn(numSeries)],
+				}},
+			},
+			Datapoints:   datapoints,
+			Unit:         xtime.Millisecond,
+			FromIngestor: (rand.Int() % 2) == 0,
+		})
+		err := promStorage.Write(context.TODO(), wq)
+		require.NoError(t, err)
+	}
+
+	closeWithCheck(t, promStorage)
+
+	assert.Equal(t, totalSamples, fakeProm.GetTotalSamples())
+
+	tallytest.AssertCounterValue(
+		t, int64(totalSamples), scope.Snapshot(), "test_scope.prom_remote_storage.enqueued_samples",
+		map[string]string{},
+	)
+	tallytest.AssertCounterValue(
+		t, int64(totalSamples), scope.Snapshot(), "test_scope.prom_remote_storage.written_samples",
+		map[string]string{},
+	)
 }
