@@ -50,8 +50,9 @@ var (
 
 func TestWrite(t *testing.T) {
 	fakeProm := promremotetest.NewServer(t)
-	scope := tally.NewTestScope("test_scope", map[string]string{})
 	defer fakeProm.Close()
+	scope := tally.NewTestScope("test_scope", map[string]string{})
+	defer verifyMetrics(t, scope)
 	promStorage, err := NewStorage(Options{
 		endpoints:     []EndpointOptions{{name: "testEndpoint", address: fakeProm.WriteAddr(), tenantHeader: "TENANT"}},
 		scope:         scope,
@@ -134,8 +135,9 @@ func TestWrite(t *testing.T) {
 
 func TestDataRace(t *testing.T) {
 	fakeProm := promremotetest.NewServer(t)
-	scope := tally.NewTestScope("data_race", map[string]string{})
 	defer fakeProm.Close()
+	scope := tally.NewTestScope("test_scope", map[string]string{})
+	defer verifyMetrics(t, scope)
 	promStorage, err := NewStorage(Options{
 		endpoints:     []EndpointOptions{{name: "testEndpoint", address: fakeProm.WriteAddr(), tenantHeader: "TENANT"}},
 		scope:         scope,
@@ -206,13 +208,14 @@ func TestDataRace(t *testing.T) {
 	assert.Equal(t, expectedSample, promWrite.Timeseries[0].Samples[0])
 
 	tallytest.AssertCounterValue(
-		t, 1, scope.Snapshot(), "data_race.prom_remote_storage.write.total",
+		t, 1, scope.Snapshot(), "test_scope.prom_remote_storage.write.total",
 		map[string]string{"endpoint_name": "testEndpoint", "code": "200"},
 	)
 }
 
 func TestWriteBasedOnRetention(t *testing.T) {
 	scope := tally.NewTestScope("test_scope", map[string]string{})
+	defer verifyMetrics(t, scope)
 	promShortRetention := promremotetest.NewServer(t)
 	defer promShortRetention.Close()
 	promMediumRetention := promremotetest.NewServer(t)
@@ -381,7 +384,8 @@ func TestErrorHandling(t *testing.T) {
 		svr.Reset()
 		svr.SetError("test err", http.StatusForbidden)
 
-		scope := tally.NewTestScope("5xx_test_scope", map[string]string{})
+		scope := tally.NewTestScope("test_scope", map[string]string{})
+		defer verifyMetrics(t, scope)
 		promStorage := getPromStorage(scope)
 		err := writeTestMetric(t, promStorage, attr)
 		require.NoError(t, err)
@@ -390,11 +394,19 @@ func TestErrorHandling(t *testing.T) {
 		require.NoError(t, promStorage.Close())
 
 		tallytest.AssertCounterValue(
-			t, 1, scope.Snapshot(), "5xx_test_scope.prom_remote_storage.write.total",
+			t, 1, scope.Snapshot(), "test_scope.prom_remote_storage.write.total",
 			map[string]string{"endpoint_name": "testEndpoint", "code": "403"},
 		)
 		tallytest.AssertCounterValue(
-			t, 1, scope.Snapshot(), "5xx_test_scope.prom_remote_storage.batch_write_err",
+			t, 1, scope.Snapshot(), "test_scope.prom_remote_storage.retry_writes",
+			map[string]string{},
+		)
+		tallytest.AssertCounterValue(
+			t, 1, scope.Snapshot(), "test_scope.prom_remote_storage.err_writes",
+			map[string]string{},
+		)
+		tallytest.AssertCounterValue(
+			t, 1, scope.Snapshot(), "test_scope.prom_remote_storage.dropped_samples",
 			map[string]string{},
 		)
 	})
@@ -403,7 +415,8 @@ func TestErrorHandling(t *testing.T) {
 		svr.Reset()
 		svr.SetError("test err", http.StatusConflict)
 
-		scope := tally.NewTestScope("409_test_scope", map[string]string{})
+		scope := tally.NewTestScope("test_scope", map[string]string{})
+		defer verifyMetrics(t, scope)
 		promStorage := getPromStorage(scope)
 		err := writeTestMetric(t, promStorage, attr)
 		require.NoError(t, err)
@@ -412,11 +425,15 @@ func TestErrorHandling(t *testing.T) {
 		require.NoError(t, promStorage.Close())
 
 		tallytest.AssertCounterValue(
-			t, 1, scope.Snapshot(), "409_test_scope.prom_remote_storage.write.total",
+			t, 1, scope.Snapshot(), "test_scope.prom_remote_storage.write.total",
 			map[string]string{"endpoint_name": "testEndpoint", "code": "409"},
 		)
 		tallytest.AssertCounterValue(
-			t, 0, scope.Snapshot(), "409_test_scope.prom_remote_storage.batch_write_err",
+			t, 1, scope.Snapshot(), "test_scope.prom_remote_storage.written_samples",
+			map[string]string{},
+		)
+		tallytest.AssertCounterValue(
+			t, 0, scope.Snapshot(), "test_scope.prom_remote_storage.err_writes",
 			map[string]string{},
 		)
 	})
@@ -424,6 +441,13 @@ func TestErrorHandling(t *testing.T) {
 
 func closeWithCheck(t *testing.T, c io.Closer) {
 	require.NoError(t, c.Close())
+}
+
+func verifyMetrics(t *testing.T, scope tally.TestScope) {
+	tallytest.AssertGaugeValue(
+		t, 0, scope.Snapshot(), "test_scope.prom_remote_storage.in_flight_samples",
+		map[string]string{},
+	)
 }
 
 func writeTestMetric(t *testing.T, s storage.Storage, attr storagemetadata.Attributes) error {

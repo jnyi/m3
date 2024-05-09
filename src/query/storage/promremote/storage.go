@@ -29,6 +29,7 @@ import (
 	"math/rand"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/m3db/m3/src/query/block"
@@ -108,7 +109,7 @@ func (wq *WriteQueue) Flush(ctx context.Context, p *promStorage) {
 	if size == 0 {
 		return
 	}
-	p.tickWrite.Inc(size)
+	p.tickWrites.Inc(1)
 	if err := p.writeBatch(ctx, wq.t, data); err != nil {
 		p.logger.Error("error writing async batch",
 			zap.String("tenant", string(wq.t)),
@@ -143,7 +144,6 @@ func NewStorage(opts Options) (storage.Storage, error) {
 	opts.logger.Info("Creating a new promoremote storage...")
 	client := xhttp.NewHTTPClient(opts.httpOptions)
 	scope := opts.scope.SubScope(metricsScope)
-	ctx, cancel := context.WithCancel(context.Background())
 	// Use fixed
 	queriesWithFixedTenants := make(map[tenantKey]*WriteQueue, len(opts.tenantRules)+1)
 	queriesWithFixedTenants[tenantKey(opts.tenantDefault)] = NewWriteQueue(tenantKey(opts.tenantDefault), opts.queueSize)
@@ -159,26 +159,23 @@ func NewStorage(opts Options) (storage.Storage, error) {
 		client:          client,
 		endpointMetrics: initEndpointMetrics(opts.endpoints, scope),
 		scope:           scope,
-		samplesWritten:  scope.Counter("samples_written"),
+		enqueuedSamples: scope.Counter("enqueued_samples"),
+		writtenSamples:  scope.Counter("written_samples"),
+		droppedSamples:  scope.Counter("dropped_samples"),
+		inFlightSamples: scope.Gauge("in_flight_samples"),
+		batchWrites:     scope.Counter("batch_writes"),
+		tickWrites:      scope.Counter("tick_writes"),
 		droppedWrites:   scope.Counter("dropped_writes"),
+		errWrites:       scope.Counter("err_writes"),
+		retryWrites:     scope.Counter("retry_writes"),
 		dupWrites:       scope.Counter("duplicate_writes"),
-		ingestorWrites:  scope.Counter("ingestor_writes"),
-		enqueued:        scope.Counter("enqueued"),
-		enqueueErr:      scope.Counter("enqueue_error"),
-		batchWrite:      scope.Counter("batch_write"),
-		batchWriteErr:   scope.Counter("batch_write_err"),
-		tickWrite:       scope.Counter("tick_write"),
-		retryWrite:      scope.Counter("retry_write"),
 		logger:          opts.logger,
 		queryQueue:      make(chan *storage.WriteQuery, opts.queueSize),
 		workerPool:      xsync.NewWorkerPool(opts.poolSize),
 		pendingQuery:    queriesWithFixedTenants,
-		noTenantFound:   scope.Counter("no_tenant_found"),
-		cancel:          cancel,
 		writeLoopDone:   make(chan struct{}),
-		wrongTenant:     scope.Counter("wrong_tenant"),
 	}
-	s.startAsync(ctx)
+	s.startAsync()
 	opts.logger.Info("Prometheus remote write storage created", zap.Int("num_tenants", len(queriesWithFixedTenants)))
 	return s, nil
 }
@@ -189,24 +186,25 @@ type promStorage struct {
 	client          *http.Client
 	endpointMetrics map[string]*instrument.HttpMetrics
 	scope           tally.Scope
-	samplesWritten  tally.Counter
-	droppedWrites   tally.Counter
-	enqueued        tally.Counter
-	enqueueErr      tally.Counter
-	dupWrites       tally.Counter
-	ingestorWrites  tally.Counter
-	batchWrite      tally.Counter
-	batchWriteErr   tally.Counter
-	tickWrite       tally.Counter
-	retryWrite      tally.Counter
-	logger          *zap.Logger
-	queryQueue      chan *storage.WriteQuery
-	workerPool      xsync.WorkerPool
-	pendingQuery    map[tenantKey]*WriteQueue
-	noTenantFound   tally.Counter
-	cancel          context.CancelFunc
-	writeLoopDone   chan struct{}
-	wrongTenant     tally.Counter
+	// Don't measure WriteQuery it is a very weird M3 internal data structure.
+	// samples are # of data points inside each WriteQuery
+	enqueuedSamples     tally.Counter
+	writtenSamples      tally.Counter
+	droppedSamples      tally.Counter
+	inFlightSamples     tally.Gauge
+	inFlightSampleValue atomic.Int64
+	// writes are # of http requests to downstream remote endpoints
+	tickWrites    tally.Counter
+	batchWrites   tally.Counter
+	droppedWrites tally.Counter
+	errWrites     tally.Counter
+	retryWrites   tally.Counter
+	dupWrites     tally.Counter
+	logger        *zap.Logger
+	queryQueue    chan *storage.WriteQuery
+	workerPool    xsync.WorkerPool
+	pendingQuery  map[tenantKey]*WriteQueue
+	writeLoopDone chan struct{}
 }
 
 type tenantKey string
@@ -258,7 +256,6 @@ func (p *promStorage) writeLoop() {
 			}
 			t := p.getTenant(query)
 			if _, ok := p.pendingQuery[t]; !ok {
-				p.noTenantFound.Inc(1)
 				p.droppedWrites.Inc(1)
 				p.logger.Error("no pre-defined tenant found, dropping it",
 					zap.String("tenant", string(t)),
@@ -267,7 +264,7 @@ func (p *promStorage) writeLoop() {
 				continue
 			}
 			if dataBatch := p.pendingQuery[t].Add(query); dataBatch != nil {
-				p.batchWrite.Inc(1)
+				p.batchWrites.Inc(1)
 				wg.Add(1)
 				p.workerPool.Go(func() {
 					defer wg.Done()
@@ -294,7 +291,7 @@ func (p *promStorage) writeLoop() {
 	p.writeLoopDone <- struct{}{}
 }
 
-func (p *promStorage) startAsync(_ context.Context) {
+func (p *promStorage) startAsync() {
 	p.logger.Info("Start prometheus remote write storage async job",
 		zap.Int("queueSize", p.opts.queueSize),
 		zap.Int("poolSize", p.opts.poolSize))
@@ -337,10 +334,11 @@ func deepCopy(queryOpt storage.WriteQueryOptions) storage.WriteQueryOptions {
 	return cp
 }
 
-func (p *promStorage) Write(ctx context.Context, query *storage.WriteQuery) error {
+func (p *promStorage) Write(_ context.Context, query *storage.WriteQuery) error {
 	if query == nil {
 		return nil
 	}
+	samples := int64(query.Datapoints().Len())
 	if query.Options().DuplicateWrite {
 		// M3 call site may write the same data according to different storage policies.
 		// See downsampleAndWriter in src/cmd/services/m3coordinator/ingest/write.go
@@ -351,10 +349,9 @@ func (p *promStorage) Write(ctx context.Context, query *storage.WriteQuery) erro
 		// src/cmd/services/m3coordinator/ingest/m3msg/ingest.go reuses a WriteQuery object to write different
 		// time series by calling ResetWriteQuery(). We need to make a copy of the WriteQuery object to avoid
 		// race conditions.
-		p.ingestorWrites.Inc(1)
 		queryCopy, err := storage.NewWriteQuery(deepCopy(query.Options()))
 		if err != nil {
-			p.enqueueErr.Inc(1)
+			p.droppedSamples.Inc(samples)
 			p.logger.Error("error copying write", zap.Error(err),
 				zap.String("write", query.String()))
 			return err
@@ -362,7 +359,8 @@ func (p *promStorage) Write(ctx context.Context, query *storage.WriteQuery) erro
 		query = queryCopy
 	}
 	p.queryQueue <- query
-	p.enqueued.Inc(1)
+	p.enqueuedSamples.Inc(samples)
+	p.inFlightSamples.Update(float64(p.inFlightSampleValue.Add(samples)))
 	return nil
 }
 
@@ -376,9 +374,12 @@ func (p *promStorage) writeBatch(ctx context.Context, tenant tenantKey, queries 
 	if len(queries) == 0 {
 		return nil
 	}
-	encoded, sampleCount, err := convertAndEncodeWriteQuery(queries)
+	encoded, samples, err := convertAndEncodeWriteQuery(queries)
+	sampleCount := int64(samples)
+	p.inFlightSamples.Update(float64(p.inFlightSampleValue.Add(-sampleCount)))
 	if err != nil {
-		p.batchWriteErr.Inc(1)
+		p.errWrites.Inc(1)
+		p.droppedSamples.Inc(sampleCount)
 		return err
 	}
 
@@ -388,9 +389,10 @@ func (p *promStorage) writeBatch(ctx context.Context, tenant tenantKey, queries 
 	metrics := p.endpointMetrics[endpoint.name]
 	err = p.write(ctx, metrics, endpoint, tenant, bytes.NewReader(encoded))
 	if err != nil {
-		p.batchWriteErr.Inc(1)
+		p.errWrites.Inc(1)
+		p.droppedSamples.Inc(sampleCount)
 	} else {
-		p.samplesWritten.Inc(int64(sampleCount))
+		p.writtenSamples.Inc(sampleCount)
 	}
 	return err
 }
@@ -400,8 +402,8 @@ func (p *promStorage) Type() storage.Type {
 }
 
 func (p *promStorage) Close() error {
+	p.logger.Info("Closing prometheus remote write storage", zap.String("remote store", p.Name()))
 	close(p.queryQueue)
-	p.cancel()
 	// Blocked until all pending writes are flushed.
 	<-p.writeLoopDone
 	// After this point, all writes are flushed or errored out.
@@ -458,7 +460,7 @@ func (p *promStorage) write(
 			err = nil
 			break
 		}
-		p.retryWrite.Inc(1)
+		p.retryWrites.Inc(1)
 		time.Sleep(backoff)
 		backoff *= 2
 	}
