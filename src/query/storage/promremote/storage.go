@@ -26,7 +26,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"math/rand"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -365,17 +364,20 @@ func (p *promStorage) Write(_ context.Context, query *storage.WriteQuery) error 
 }
 
 func (p *promStorage) writeBatch(ctx context.Context, tenant tenantKey, queries []*storage.WriteQuery) error {
-	logSampling := rand.Float32()
-	if logSampling < logSamplingRate {
-		p.logger.Debug("async write batch",
-			zap.String("tenant", string(tenant)),
-			zap.Int("size", len(queries)))
-	}
+	//logSampling := rand.Float32()
+	//if logSampling < logSamplingRate {
+	//	p.logger.Debug("async write batch",
+	//		zap.String("tenant", string(tenant)),
+	//		zap.Int("size", len(queries)))
+	//}
 	if len(queries) == 0 {
 		return nil
 	}
 	encoded, samples, err := convertAndEncodeWriteQuery(queries)
 	sampleCount := int64(samples)
+	p.logger.Debug("async write batch",
+		zap.String("tenant", string(tenant)),
+		zap.Int("size", len(queries)), zap.Int64("samples", sampleCount))
 	p.inFlightSamples.Update(float64(p.inFlightSampleValue.Add(-sampleCount)))
 	if err != nil {
 		p.errWrites.Inc(1)
