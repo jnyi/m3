@@ -169,10 +169,12 @@ func NewStorage(opts Options) (storage.Storage, error) {
 		retryWrites:     scope.Counter("retry_writes"),
 		dupWrites:       scope.Counter("duplicate_writes"),
 		logger:          opts.logger,
-		queryQueue:      make(chan *storage.WriteQuery, opts.queueSize),
-		workerPool:      xsync.NewWorkerPool(opts.poolSize),
-		pendingQuery:    queriesWithFixedTenants,
-		writeLoopDone:   make(chan struct{}),
+		// this queue is used for enqueueing all data, need to be larger to avoid data loss
+		// this can be tested in TestLoad
+		queryQueue:    make(chan *storage.WriteQuery, len(opts.tenantRules)*opts.queueSize),
+		workerPool:    xsync.NewWorkerPool(opts.poolSize),
+		pendingQuery:  queriesWithFixedTenants,
+		writeLoopDone: make(chan struct{}),
 	}
 	s.startAsync()
 	opts.logger.Info("Prometheus remote write storage created", zap.Int("num_tenants", len(queriesWithFixedTenants)))
@@ -274,6 +276,7 @@ func (p *promStorage) writeLoop() {
 					}
 				})
 			}
+			break
 		case <-ticker.C:
 			p.flushPendingQueues(ctxForWrites, &wg)
 		}

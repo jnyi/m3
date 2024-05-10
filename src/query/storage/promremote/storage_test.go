@@ -360,12 +360,15 @@ func TestWriteBasedOnRetention(t *testing.T) {
 }
 
 func TestLoad(t *testing.T) {
-	t.Run("no jitter", func(t *testing.T) {
+	t.Run("no jitter - small", func(t *testing.T) {
+		LoadTestPromRemoteStorage(t, false, 1, 2, 10)
+	})
+	t.Run("no jitter - large", func(t *testing.T) {
 		LoadTestPromRemoteStorage(t, false, 5, 20, 100)
 	})
-	//t.Run("jitter with timeouts", func(t *testing.T) {
-	//	LoadTestPromRemoteStorage(t, true, 5, 20, 100)
-	//})
+	t.Run("jitter with timeouts", func(t *testing.T) {
+		LoadTestPromRemoteStorage(t, true, 5, 20, 100)
+	})
 }
 
 func TestErrorHandling(t *testing.T) {
@@ -513,7 +516,7 @@ func LoadTestPromRemoteStorage(t *testing.T, jitter bool, numTenants, numSeries,
 		scope:         scope,
 		logger:        logger,
 		poolSize:      10,
-		queueSize:     numSeries,
+		queueSize:     numTenants * numSamples,
 		tenantDefault: "unknown",
 		tickDuration:  ptrDuration(tickDuration),
 		tenantRules:   tenantRules,
@@ -566,8 +569,8 @@ func LoadTestPromRemoteStorage(t *testing.T, jitter bool, numTenants, numSeries,
 		)
 	} else {
 		// this MUST fail because of jitter we will have dropped_samples
-		tallytest.AssertCounterValue(
-			t, 0, scope.Snapshot(), "test_scope.prom_remote_storage.dropped_samples",
+		tallytest.AssertCounterNonZero(
+			t, scope.Snapshot(), "test_scope.prom_remote_storage.dropped_samples",
 			map[string]string{},
 		)
 	}

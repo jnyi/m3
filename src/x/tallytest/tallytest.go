@@ -41,6 +41,17 @@ func AssertCounterValue(t *testing.T, expected int64, s tally.Snapshot, name str
 	return assert.Equal(t, expected, counter.Value(), mismatch)
 }
 
+func AssertCounterNonZero(t *testing.T, s tally.Snapshot, name string, tags map[string]string) bool {
+	index := flattenMetricIndex(name, tags)
+	counter := s.Counters()[index]
+	notFound := fmt.Sprintf("not found: key=%s, actual=%v", index, counterKeys(s.Counters()))
+	if !assert.NotNil(t, counter, notFound) {
+		return false
+	}
+	mismatch := fmt.Sprintf("current values: %v", CounterMap(s.Counters()))
+	return assert.True(t, counter.Value() > 0, mismatch)
+}
+
 // AssertGaugeValue asserts that the given gauge has the expected value.
 func AssertGaugeValue(t *testing.T, expected float64, s tally.Snapshot, name string, tags map[string]string) bool {
 	index := flattenMetricIndex(name, tags)
