@@ -26,6 +26,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -95,11 +96,12 @@ func (wq *WriteQueue) Add(query *storage.WriteQuery) []*storage.WriteQuery {
 	// but the majority of the time it won't be full and therefore not worth optimizating.
 	// NB: we have to check if the queue is full under the lock. Otherwise, two goroutines
 	// may see the full queue and try to pop it at the same time.
+	var res []*storage.WriteQuery
 	if len(wq.queries) >= wq.capacity {
-		return wq.popUnderLock()
+		res = wq.popUnderLock()
 	}
 	wq.queries = append(wq.queries, query)
-	return nil
+	return res
 }
 
 func (wq *WriteQueue) Flush(ctx context.Context, p *promStorage) {
@@ -169,12 +171,11 @@ func NewStorage(opts Options) (storage.Storage, error) {
 		retryWrites:     scope.Counter("retry_writes"),
 		dupWrites:       scope.Counter("duplicate_writes"),
 		logger:          opts.logger,
-		// this queue is used for enqueueing all data, need to be larger to avoid data loss
-		// this can be tested in TestLoad
-		queryQueue:    make(chan *storage.WriteQuery, len(opts.tenantRules)*opts.queueSize),
-		workerPool:    xsync.NewWorkerPool(opts.poolSize),
-		pendingQuery:  queriesWithFixedTenants,
-		writeLoopDone: make(chan struct{}),
+		dataQueue:       make(chan *storage.WriteQuery, len(opts.tenantRules)*opts.queueSize),
+		dataQueueSize:   scope.Gauge("data_queue_size"),
+		workerPool:      xsync.NewWorkerPool(opts.poolSize),
+		pendingQuery:    queriesWithFixedTenants,
+		writeLoopDone:   make(chan struct{}),
 	}
 	s.startAsync()
 	opts.logger.Info("Prometheus remote write storage created", zap.Int("num_tenants", len(queriesWithFixedTenants)))
@@ -202,7 +203,8 @@ type promStorage struct {
 	retryWrites   tally.Counter
 	dupWrites     tally.Counter
 	logger        *zap.Logger
-	queryQueue    chan *storage.WriteQuery
+	dataQueue     chan *storage.WriteQuery
+	dataQueueSize tally.Gauge
 	workerPool    xsync.WorkerPool
 	pendingQuery  map[tenantKey]*WriteQueue
 	writeLoopDone chan struct{}
@@ -247,7 +249,7 @@ func (p *promStorage) writeLoop() {
 	stop := false
 	for !stop {
 		select {
-		case query := <-p.queryQueue:
+		case query := <-p.dataQueue:
 			if query == nil {
 				p.logger.Info("Got the poison pill. Exiting the write loop.")
 				// The channel is closed. We should exit.
@@ -281,7 +283,7 @@ func (p *promStorage) writeLoop() {
 			p.flushPendingQueues(ctxForWrites, &wg)
 		}
 	}
-	// At this point, `p.queryQueue` is drained and closed.
+	// At this point, `p.dataQueue` is drained and closed.
 	p.logger.Info("Draining pending per-tenant write queues")
 	numWrites := p.flushPendingQueues(ctxForWrites, &wg)
 	p.logger.Info("Waiting for all async pending writes to finish",
@@ -360,19 +362,21 @@ func (p *promStorage) Write(_ context.Context, query *storage.WriteQuery) error 
 		}
 		query = queryCopy
 	}
-	p.queryQueue <- query
+	p.dataQueue <- query
+	// The data is enqueued successfully.
 	p.enqueuedSamples.Inc(samples)
 	p.inFlightSamples.Update(float64(p.inFlightSampleValue.Add(samples)))
+	p.dataQueueSize.Update(float64(len(p.dataQueue)))
 	return nil
 }
 
 func (p *promStorage) writeBatch(ctx context.Context, tenant tenantKey, queries []*storage.WriteQuery) error {
-	//logSampling := rand.Float32()
-	//if logSampling < logSamplingRate {
-	//	p.logger.Debug("async write batch",
-	//		zap.String("tenant", string(tenant)),
-	//		zap.Int("size", len(queries)))
-	//}
+	logSampling := rand.Float32()
+	if logSampling < logSamplingRate {
+		p.logger.Debug("async write batch",
+			zap.String("tenant", string(tenant)),
+			zap.Int("size", len(queries)))
+	}
 	if len(queries) == 0 {
 		return nil
 	}
@@ -407,10 +411,13 @@ func (p *promStorage) Type() storage.Type {
 }
 
 func (p *promStorage) Close() error {
-	p.logger.Info("Closing prometheus remote write storage", zap.String("remote store", p.Name()))
-	close(p.queryQueue)
+	close(p.dataQueue)
+	p.logger.Info("Closing prometheus remote write storage",
+		zap.String("remote store", p.Name()),
+		zap.Int("data queue size", len(p.dataQueue)))
 	// Blocked until all pending writes are flushed.
 	<-p.writeLoopDone
+	p.dataQueueSize.Update(float64(len(p.dataQueue)))
 	// After this point, all writes are flushed or errored out.
 	p.client.CloseIdleConnections()
 	return nil

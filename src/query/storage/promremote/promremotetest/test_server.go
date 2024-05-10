@@ -77,7 +77,7 @@ func (s *TestPromServer) handleWrite(w http.ResponseWriter, r *http.Request) {
 	}
 	now := xtime.Now()
 	if s.jitter {
-		r := rand.Intn(1200)
+		r := rand.Intn(2000)
 		time.Sleep(time.Duration(r) * time.Millisecond)
 		if xtime.Now().After(now.Add(1 * time.Second)) {
 			http.Error(w, "timeout", http.StatusRequestTimeout)

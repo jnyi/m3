@@ -462,6 +462,10 @@ func verifyMetrics(t *testing.T, scope tally.TestScope) {
 		t, 0, scope.Snapshot(), "test_scope.prom_remote_storage.in_flight_samples",
 		map[string]string{},
 	)
+	tallytest.AssertGaugeValue(
+		t, 0, scope.Snapshot(), "test_scope.prom_remote_storage.data_queue_size",
+		map[string]string{},
+	)
 }
 
 func writeTestMetric(t *testing.T, s storage.Storage, attr storagemetadata.Attributes) error {
@@ -516,7 +520,7 @@ func LoadTestPromRemoteStorage(t *testing.T, jitter bool, numTenants, numSeries,
 		scope:         scope,
 		logger:        logger,
 		poolSize:      10,
-		queueSize:     numTenants * numSamples,
+		queueSize:     10,
 		tenantDefault: "unknown",
 		tickDuration:  ptrDuration(tickDuration),
 		tenantRules:   tenantRules,
