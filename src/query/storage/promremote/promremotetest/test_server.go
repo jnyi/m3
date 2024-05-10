@@ -23,11 +23,14 @@ package promremotetest
 
 import (
 	"fmt"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
+	xtime "github.com/m3db/m3/src/x/time"
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/prometheus/prometheus/storage/remote"
 	"github.com/stretchr/testify/assert"
@@ -36,10 +39,12 @@ import (
 // TestPromServer is a fake http server handling prometheus remote write. Intended for test usage.
 type TestPromServer struct {
 	mu               sync.Mutex
+	totalSamples     int
 	lastWriteRequest *prompb.WriteRequest
 	respErr          *respErr
 	t                *testing.T
 	svr              *httptest.Server
+	jitter           bool
 }
 
 type respErr struct {
@@ -48,8 +53,8 @@ type respErr struct {
 }
 
 // NewServer creates new instance of a fake server.
-func NewServer(t *testing.T) *TestPromServer {
-	testPromServer := &TestPromServer{t: t}
+func NewServer(t *testing.T, jitter bool) *TestPromServer {
+	testPromServer := &TestPromServer{t: t, jitter: jitter}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/write", testPromServer.handleWrite)
@@ -70,11 +75,30 @@ func (s *TestPromServer) handleWrite(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	now := xtime.Now()
+	if s.jitter {
+		r := rand.Intn(2000)
+		time.Sleep(time.Duration(r) * time.Millisecond)
+		if xtime.Now().After(now.Add(1 * time.Second)) {
+			http.Error(w, "timeout", http.StatusRequestTimeout)
+			return
+		}
+	}
 	s.lastWriteRequest = req
+	for _, ts := range req.Timeseries {
+		s.totalSamples += len(ts.Samples)
+	}
 	if s.respErr != nil {
 		http.Error(w, s.respErr.error, s.respErr.status)
 		return
 	}
+}
+
+// GetTotalSamples returns total number of samples received.
+func (s *TestPromServer) GetTotalSamples() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.totalSamples
 }
 
 // GetLastWriteRequest returns the last recorded write request.

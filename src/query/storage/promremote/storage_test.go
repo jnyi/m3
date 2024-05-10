@@ -22,6 +22,8 @@ package promremote
 
 import (
 	"context"
+	"fmt"
+	"github.com/m3db/m3/src/metrics/filters"
 	"io"
 	"math/rand"
 	"net/http"
@@ -49,9 +51,10 @@ var (
 )
 
 func TestWrite(t *testing.T) {
-	fakeProm := promremotetest.NewServer(t)
-	scope := tally.NewTestScope("test_scope", map[string]string{})
+	fakeProm := promremotetest.NewServer(t, false)
 	defer fakeProm.Close()
+	scope := tally.NewTestScope("test_scope", map[string]string{})
+	defer verifyMetrics(t, scope)
 	promStorage, err := NewStorage(Options{
 		endpoints:     []EndpointOptions{{name: "testEndpoint", address: fakeProm.WriteAddr(), tenantHeader: "TENANT"}},
 		scope:         scope,
@@ -133,9 +136,10 @@ func TestWrite(t *testing.T) {
 }
 
 func TestDataRace(t *testing.T) {
-	fakeProm := promremotetest.NewServer(t)
-	scope := tally.NewTestScope("data_race", map[string]string{})
+	fakeProm := promremotetest.NewServer(t, false)
 	defer fakeProm.Close()
+	scope := tally.NewTestScope("test_scope", map[string]string{})
+	defer verifyMetrics(t, scope)
 	promStorage, err := NewStorage(Options{
 		endpoints:     []EndpointOptions{{name: "testEndpoint", address: fakeProm.WriteAddr(), tenantHeader: "TENANT"}},
 		scope:         scope,
@@ -206,20 +210,21 @@ func TestDataRace(t *testing.T) {
 	assert.Equal(t, expectedSample, promWrite.Timeseries[0].Samples[0])
 
 	tallytest.AssertCounterValue(
-		t, 1, scope.Snapshot(), "data_race.prom_remote_storage.write.total",
+		t, 1, scope.Snapshot(), "test_scope.prom_remote_storage.write.total",
 		map[string]string{"endpoint_name": "testEndpoint", "code": "200"},
 	)
 }
 
 func TestWriteBasedOnRetention(t *testing.T) {
 	scope := tally.NewTestScope("test_scope", map[string]string{})
-	promShortRetention := promremotetest.NewServer(t)
+	defer verifyMetrics(t, scope)
+	promShortRetention := promremotetest.NewServer(t, false)
 	defer promShortRetention.Close()
-	promMediumRetention := promremotetest.NewServer(t)
+	promMediumRetention := promremotetest.NewServer(t, false)
 	defer promMediumRetention.Close()
-	promLongRetention := promremotetest.NewServer(t)
+	promLongRetention := promremotetest.NewServer(t, false)
 	defer promLongRetention.Close()
-	promLongRetention2 := promremotetest.NewServer(t)
+	promLongRetention2 := promremotetest.NewServer(t, false)
 	defer promLongRetention2.Close()
 	reset := func() {
 		promShortRetention.Reset()
@@ -354,8 +359,20 @@ func TestWriteBasedOnRetention(t *testing.T) {
 	})
 }
 
+func TestLoad(t *testing.T) {
+	t.Run("no jitter - small", func(t *testing.T) {
+		LoadTestPromRemoteStorage(t, false, 1, 2, 10)
+	})
+	t.Run("no jitter - large", func(t *testing.T) {
+		LoadTestPromRemoteStorage(t, false, 5, 20, 100)
+	})
+	t.Run("jitter with timeouts", func(t *testing.T) {
+		LoadTestPromRemoteStorage(t, true, 5, 20, 100)
+	})
+}
+
 func TestErrorHandling(t *testing.T) {
-	svr := promremotetest.NewServer(t)
+	svr := promremotetest.NewServer(t, false)
 	defer svr.Close()
 
 	attr := storagemetadata.Attributes{
@@ -381,7 +398,8 @@ func TestErrorHandling(t *testing.T) {
 		svr.Reset()
 		svr.SetError("test err", http.StatusForbidden)
 
-		scope := tally.NewTestScope("5xx_test_scope", map[string]string{})
+		scope := tally.NewTestScope("test_scope", map[string]string{})
+		defer verifyMetrics(t, scope)
 		promStorage := getPromStorage(scope)
 		err := writeTestMetric(t, promStorage, attr)
 		require.NoError(t, err)
@@ -390,11 +408,19 @@ func TestErrorHandling(t *testing.T) {
 		require.NoError(t, promStorage.Close())
 
 		tallytest.AssertCounterValue(
-			t, 1, scope.Snapshot(), "5xx_test_scope.prom_remote_storage.write.total",
+			t, 1, scope.Snapshot(), "test_scope.prom_remote_storage.write.total",
 			map[string]string{"endpoint_name": "testEndpoint", "code": "403"},
 		)
 		tallytest.AssertCounterValue(
-			t, 1, scope.Snapshot(), "5xx_test_scope.prom_remote_storage.batch_write_err",
+			t, 1, scope.Snapshot(), "test_scope.prom_remote_storage.retry_writes",
+			map[string]string{},
+		)
+		tallytest.AssertCounterValue(
+			t, 1, scope.Snapshot(), "test_scope.prom_remote_storage.err_writes",
+			map[string]string{},
+		)
+		tallytest.AssertCounterValue(
+			t, 1, scope.Snapshot(), "test_scope.prom_remote_storage.dropped_samples",
 			map[string]string{},
 		)
 	})
@@ -403,7 +429,8 @@ func TestErrorHandling(t *testing.T) {
 		svr.Reset()
 		svr.SetError("test err", http.StatusConflict)
 
-		scope := tally.NewTestScope("409_test_scope", map[string]string{})
+		scope := tally.NewTestScope("test_scope", map[string]string{})
+		defer verifyMetrics(t, scope)
 		promStorage := getPromStorage(scope)
 		err := writeTestMetric(t, promStorage, attr)
 		require.NoError(t, err)
@@ -412,11 +439,15 @@ func TestErrorHandling(t *testing.T) {
 		require.NoError(t, promStorage.Close())
 
 		tallytest.AssertCounterValue(
-			t, 1, scope.Snapshot(), "409_test_scope.prom_remote_storage.write.total",
+			t, 1, scope.Snapshot(), "test_scope.prom_remote_storage.write.total",
 			map[string]string{"endpoint_name": "testEndpoint", "code": "409"},
 		)
 		tallytest.AssertCounterValue(
-			t, 0, scope.Snapshot(), "409_test_scope.prom_remote_storage.batch_write_err",
+			t, 1, scope.Snapshot(), "test_scope.prom_remote_storage.written_samples",
+			map[string]string{},
+		)
+		tallytest.AssertCounterValue(
+			t, 0, scope.Snapshot(), "test_scope.prom_remote_storage.err_writes",
 			map[string]string{},
 		)
 	})
@@ -424,6 +455,17 @@ func TestErrorHandling(t *testing.T) {
 
 func closeWithCheck(t *testing.T, c io.Closer) {
 	require.NoError(t, c.Close())
+}
+
+func verifyMetrics(t *testing.T, scope tally.TestScope) {
+	tallytest.AssertGaugeValue(
+		t, 0, scope.Snapshot(), "test_scope.prom_remote_storage.in_flight_samples",
+		map[string]string{},
+	)
+	tallytest.AssertGaugeValue(
+		t, 0, scope.Snapshot(), "test_scope.prom_remote_storage.data_queue_size",
+		map[string]string{},
+	)
 }
 
 func writeTestMetric(t *testing.T, s storage.Storage, attr storagemetadata.Attributes) error {
@@ -452,4 +494,88 @@ func getWriteRequest(promServer *promremotetest.TestPromServer) *prompb.WriteReq
 		wq = promServer.GetLastWriteRequest()
 	}
 	return wq
+}
+
+func LoadTestPromRemoteStorage(t *testing.T, jitter bool, numTenants, numSeries, numSamples int) {
+	fakeProm := promremotetest.NewServer(t, jitter)
+	defer fakeProm.Close()
+	scope := tally.NewTestScope("test_scope", map[string]string{})
+	defer verifyMetrics(t, scope)
+	labelName := "test_tag_name"
+	labelValues := make([][]byte, numSeries)
+	for i := 0; i < numSeries; i++ {
+		labelValues[i] = []byte(fmt.Sprintf("test_tag_value_%d", i))
+	}
+	tenantRules := make([]TenantRule, numTenants)
+	for i := 0; i < numTenants; i++ {
+		filterValues, _ := filters.ValidateTagsFilter(fmt.Sprintf("%s:%s", labelName, labelValues[i%numSeries]))
+		filter, _ := filters.NewTagsFilter(filterValues, filters.Conjunction, filters.TagsFilterOptions{})
+		tenantRules[i] = TenantRule{
+			Tenant: fmt.Sprintf("tenant_%d", i),
+			Filter: filter,
+		}
+	}
+	promStorage, err := NewStorage(Options{
+		endpoints:     []EndpointOptions{{name: "testEndpoint", address: fakeProm.WriteAddr(), tenantHeader: "TENANT"}},
+		scope:         scope,
+		logger:        logger,
+		poolSize:      10,
+		queueSize:     10,
+		tenantDefault: "unknown",
+		tickDuration:  ptrDuration(tickDuration),
+		tenantRules:   tenantRules,
+	})
+	require.NoError(t, err)
+
+	totalSamples := 0
+	for i := 0; i < numSamples; i++ {
+		datapoints := make(ts.Datapoints, 0, numSeries)
+		for j := 0; j < cap(datapoints); j++ {
+			datapoints = append(datapoints, ts.Datapoint{
+				Timestamp: xtime.Now(),
+				Value:     rand.Float64(),
+			})
+		}
+		totalSamples += len(datapoints)
+		wq, _ := storage.NewWriteQuery(storage.WriteQueryOptions{
+			Tags: models.Tags{
+				Opts: models.NewTagOptions(),
+				Tags: []models.Tag{{
+					Name:  []byte(labelName),
+					Value: labelValues[rand.Intn(numSeries)],
+				}},
+			},
+			Datapoints:   datapoints,
+			Unit:         xtime.Millisecond,
+			FromIngestor: (rand.Int() % 2) == 0,
+		})
+		err := promStorage.Write(context.TODO(), wq)
+		if !jitter {
+			require.NoError(t, err)
+		}
+	}
+
+	closeWithCheck(t, promStorage)
+
+	if !jitter {
+		assert.Equal(t, totalSamples, fakeProm.GetTotalSamples())
+		tallytest.AssertCounterValue(
+			t, int64(totalSamples), scope.Snapshot(), "test_scope.prom_remote_storage.enqueued_samples",
+			map[string]string{},
+		)
+		tallytest.AssertCounterValue(
+			t, int64(totalSamples), scope.Snapshot(), "test_scope.prom_remote_storage.written_samples",
+			map[string]string{},
+		)
+		tallytest.AssertCounterValue(
+			t, 0, scope.Snapshot(), "test_scope.prom_remote_storage.dropped_samples",
+			map[string]string{},
+		)
+	} else {
+		// this MUST fail because of jitter we will have dropped_samples
+		tallytest.AssertCounterNonZero(
+			t, scope.Snapshot(), "test_scope.prom_remote_storage.dropped_samples",
+			map[string]string{},
+		)
+	}
 }
