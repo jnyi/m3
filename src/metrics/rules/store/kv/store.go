@@ -23,6 +23,7 @@ package kv
 import (
 	"errors"
 	"fmt"
+	"log"
 
 	"github.com/m3db/m3/src/cluster/kv"
 	merrors "github.com/m3db/m3/src/metrics/errors"
@@ -80,6 +81,10 @@ func (s *store) ReadRuleSet(nsName string) (rules.RuleSet, error) {
 	rs, err := rules.NewRuleSetFromProto(version, &ruleSet, rules.NewOptions())
 	if err != nil {
 		return nil, fmt.Errorf("could not fetch RuleSet %s: %v", nsName, err.Error())
+	}
+	if s.opts.UseFastMatch {
+		rs.UseFastMatch()
+		log.Default().Printf("using fast match for RuleSet %s", nsName)
 	}
 	return rs, err
 }

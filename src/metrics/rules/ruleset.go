@@ -23,6 +23,7 @@ package rules
 import (
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"sort"
 	"time"
@@ -127,6 +128,8 @@ type RuleSet interface {
 
 	// ToMutableRuleSet returns a mutable version of this ruleset.
 	ToMutableRuleSet() MutableRuleSet
+
+	UseFastMatch()
 }
 
 // MutableRuleSet is mutable ruleset.
@@ -180,6 +183,7 @@ type ruleSet struct {
 	tagsFilterOpts     filters.TagsFilterOptions
 	newRollupIDFn      metricid.NewIDFn
 	isRollupIDFn       metricid.MatchIDFn
+	useFastMatch       bool
 }
 
 // NewRuleSetFromProto creates a new RuleSet from a proto object.
@@ -242,6 +246,7 @@ func (rs *ruleSet) Tombstoned() bool                 { return rs.tombstoned }
 func (rs *ruleSet) LastUpdatedAtNanos() int64        { return rs.lastUpdatedAtNanos }
 func (rs *ruleSet) CreatedAtNanos() int64            { return rs.createdAtNanos }
 func (rs *ruleSet) ToMutableRuleSet() MutableRuleSet { return rs }
+func (rs *ruleSet) UseFastMatch() {rs.useFastMatch = true}
 
 func (rs *ruleSet) ActiveSet(timeNanos int64) ActiveSet {
 	mappingRules := make([]*mappingRule, 0, len(rs.mappingRules))
@@ -254,6 +259,18 @@ func (rs *ruleSet) ActiveSet(timeNanos int64) ActiveSet {
 		activeRule := rollupRule.activeRule(timeNanos)
 		rollupRules = append(rollupRules, activeRule)
 	}
+	if rs.useFastMatch {
+		log.Default().Printf("using fast rule match for ActiveRuleSet %s", rs.namespace)
+		return newActiveRuleSetFast(
+			rs.version,
+			mappingRules,
+			rollupRules,
+			rs.tagsFilterOpts,
+			rs.newRollupIDFn,
+			rs.isRollupIDFn,
+		)
+	}
+	log.Default().Printf("using vallina rule match for ActiveRuleSet %s", rs.namespace)
 	return newActiveRuleSet(
 		rs.version,
 		mappingRules,

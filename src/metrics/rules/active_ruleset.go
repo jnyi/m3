@@ -23,7 +23,10 @@ package rules
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"sort"
+	"strings"
+	"time"
 
 	"github.com/m3db/m3/src/metrics/aggregation"
 	"github.com/m3db/m3/src/metrics/filters"
@@ -45,6 +48,69 @@ type activeRuleSet struct {
 	tagsFilterOpts  filters.TagsFilterOptions
 	newRollupIDFn   metricid.NewIDFn
 	isRollupIDFn    metricid.MatchIDFn
+
+	useFastMatch bool
+	// The key is the value of the __name__ label, the value is the mappingRule
+	mappingRuleIndex map[string][]*mappingRule
+	// The key is the value of the __name__ label, the value is rollupRule
+	rollupRuleIndex map[string][]*rollupRule
+}
+
+func newActiveRuleSetFast(
+	version int,
+	mappingRules []*mappingRule,
+	rollupRules []*rollupRule,
+	tagsFilterOpts filters.TagsFilterOptions,
+	newRollupIDFn metricid.NewIDFn,
+	isRollupIDFn metricid.MatchIDFn,
+) *activeRuleSet {
+	rset := newActiveRuleSet(version, mappingRules, rollupRules, tagsFilterOpts, newRollupIDFn, isRollupIDFn)
+	rset.useFastMatch = true
+
+	nowNanos := time.Now().UnixNano()
+
+	getNameTagValue := func(nameFilterValue *filters.FilterValue, snapshotString func() string) string {
+		if nameFilterValue == nil {
+			panic(fmt.Sprintf("A rule has no fitler for metric name tag: %s", snapshotString()))
+		}
+		if nameFilterValue.Negate {
+			panic(fmt.Sprintf("A rule has negated filter for metric name tag: %s", snapshotString()))
+		}
+		if strings.Contains(nameFilterValue.Pattern, "*") {
+			panic(fmt.Sprintf("A rule has wildcard filter for metric name tag %s", snapshotString()))
+		}
+		return nameFilterValue.Pattern
+	}
+
+	rset.mappingRuleIndex = make(map[string][]*mappingRule)
+	for _, rule := range mappingRules {
+		snapshot := rule.activeSnapshot(nowNanos)
+		if snapshot == nil {
+			panic(fmt.Sprintf("mapping rule has no active snapshot: %+v", rule))
+		}
+		nameTagValue := getNameTagValue(snapshot.filter.NameFilterValue(), func() string { return fmt.Sprintf("%+v", snapshot) })
+		rset.mappingRuleIndex[nameTagValue] = append(rset.mappingRuleIndex[nameTagValue], rule)
+	}
+	rset.rollupRuleIndex = make(map[string][]*rollupRule)
+	for _, rule := range rollupRules {
+		snapshot := rule.activeSnapshot(nowNanos)
+		if snapshot == nil {
+			panic(fmt.Sprintf("rollup rule has no active snapshot: %+v", rule))
+		}
+		nameTagValue := getNameTagValue(snapshot.filter.NameFilterValue(), func() string { return fmt.Sprintf("%+v", snapshot) })
+		rset.rollupRuleIndex[nameTagValue] = append(rset.rollupRuleIndex[nameTagValue], rule)
+	}
+	// TODO: use a proper logger
+	logger := log.Default()
+	logger.Printf("created mappingRuleIndex of %d entries for %d mapping rules and rollupRuleIndex of %d entries for %d rollup rules\n",
+		len(rset.mappingRuleIndex), len(mappingRules), len(rset.rollupRuleIndex), len(rollupRules))
+	for name, rules := range rset.mappingRuleIndex {
+		logger.Printf("mappingRuleIndex[%s] has %d rules\n", name, len(rules))
+	}
+	for name, rules := range rset.rollupRuleIndex {
+		logger.Printf("rollupRuleIndex[%s] has %d rules\n", name, len(rules))
+	}
+	return rset
 }
 
 func newActiveRuleSet(
@@ -261,18 +327,42 @@ func (as *activeRuleSet) mappingsForNonRollupID(
 	matchOpts MatchOptions,
 ) (mappingResults, error) {
 	var (
-		cutoverNanos int64
-		pipelines    []metadata.PipelineMetadata
+		cutoverNanos           int64
+		pipelines              []metadata.PipelineMetadata
+		err                    error
+		nameFromId, tagsFromId []byte
+		filteredRules          []*mappingRule = as.mappingRules
 	)
-	for _, mappingRule := range as.mappingRules {
+
+	opts := filters.TagMatchOptions{
+		SortedTagIteratorFn: matchOpts.SortedTagIteratorFn,
+		NameAndTagsFn:       matchOpts.NameAndTagsFn,
+	}
+	if as.useFastMatch {
+		nameFromId, tagsFromId, err = opts.NameAndTagsFn(id)
+		if err != nil {
+			return mappingResults{}, err
+		}
+		ok := false
+		if filteredRules, ok = as.mappingRuleIndex[string(nameFromId)]; !ok {
+			// No rule matches the metric name. It's fine to iterate over nil.
+			filteredRules = nil
+		}
+	}
+	doMatch := func(snapshot *mappingRuleSnapshot) (bool, error) {
+		return snapshot.filter.Matches(id, opts)
+	}
+	if as.useFastMatch {
+		doMatch = func(snapshot *mappingRuleSnapshot) (bool, error) {
+			return snapshot.filter.MatchesWithNameAndTags(nameFromId, tagsFromId, opts)
+		}
+	}
+	for _, mappingRule := range filteredRules {
 		snapshot := mappingRule.activeSnapshot(timeNanos)
 		if snapshot == nil {
 			continue
 		}
-		matches, err := snapshot.filter.Matches(id, filters.TagMatchOptions{
-			SortedTagIteratorFn: matchOpts.SortedTagIteratorFn,
-			NameAndTagsFn:       matchOpts.NameAndTagsFn,
-		})
+		matches, err := doMatch(snapshot)
 		if err != nil {
 			return mappingResults{}, err
 		}
@@ -333,21 +423,45 @@ func (as *activeRuleSet) LatestRollupRules(_ []byte, timeNanos int64) ([]view.Ro
 
 func (as *activeRuleSet) rollupResultsFor(id []byte, timeNanos int64, matchOpts MatchOptions) (rollupResults, error) {
 	var (
-		cutoverNanos  int64
-		rollupTargets []rollupTarget
-		keepOriginal  bool
-		tags          [][]models.Tag
+		cutoverNanos           int64
+		rollupTargets          []rollupTarget
+		keepOriginal           bool
+		tags                   [][]models.Tag
+		err                    error
+		nameFromId, tagsFromId []byte
+		filteredRules          []*rollupRule = as.rollupRules
 	)
 
-	for _, rollupRule := range as.rollupRules {
+	opts := filters.TagMatchOptions{
+		NameAndTagsFn:       matchOpts.NameAndTagsFn,
+		SortedTagIteratorFn: matchOpts.SortedTagIteratorFn,
+	}
+	if as.useFastMatch {
+		nameFromId, tagsFromId, err = opts.NameAndTagsFn(id)
+		if err != nil {
+			return rollupResults{}, err
+		}
+		ok := false
+		if filteredRules, ok = as.rollupRuleIndex[string(nameFromId)]; !ok {
+			// No rule matches the metric name. It's fine to iterate over nil.
+			filteredRules = nil
+		}
+	}
+	doMatch := func(snapshot *rollupRuleSnapshot) (bool, error) {
+		return snapshot.filter.Matches(id, opts)
+	}
+	if as.useFastMatch {
+		doMatch = func(snapshot *rollupRuleSnapshot) (bool, error) {
+			return snapshot.filter.MatchesWithNameAndTags(nameFromId, tagsFromId, opts)
+		}
+	}
+
+	for _, rollupRule := range filteredRules {
 		snapshot := rollupRule.activeSnapshot(timeNanos)
 		if snapshot == nil {
 			continue
 		}
-		match, err := snapshot.filter.Matches(id, filters.TagMatchOptions{
-			NameAndTagsFn:       matchOpts.NameAndTagsFn,
-			SortedTagIteratorFn: matchOpts.SortedTagIteratorFn,
-		})
+		match, err := doMatch(snapshot)
 		if err != nil {
 			return rollupResults{}, err
 		}

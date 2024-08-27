@@ -26,6 +26,7 @@ import (
 	"testing"
 
 	"github.com/m3db/m3/src/metrics/metric/id"
+	"github.com/m3db/m3/src/query/models"
 
 	"github.com/stretchr/testify/require"
 )
@@ -266,6 +267,18 @@ func newTestMapTagsFilter(
 
 func (f *testMapTagsFilter) String() string {
 	return ""
+}
+
+func (f *testMapTagsFilter) MatchesWithNameAndTags(_, _ []byte, _ TagMatchOptions) (bool, error) {
+	panic("not implemented")
+}
+
+func (f *testMapTagsFilter) NameFilterValue() *FilterValue {
+	panic("not implemented")
+}
+
+func (f *testMapTagsFilter) MatchTags(_ models.Tags) bool {
+	panic("not implemented")
 }
 
 func (f *testMapTagsFilter) Matches(id []byte, _ TagMatchOptions) (bool, error) {

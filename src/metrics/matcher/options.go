@@ -142,6 +142,9 @@ type Options interface {
 
 	// SetInterruptedCh sets the interrupted channel.
 	SetInterruptedCh(value <-chan struct{}) Options
+
+	SetUseFastMatch() Options
+	UseFastMatch() bool
 }
 
 type options struct {
@@ -159,6 +162,7 @@ type options struct {
 	onRuleSetUpdatedFn          OnRuleSetUpdatedFn
 	requireNamespaceWatchOnInit bool
 	interruptedCh               <-chan struct{}
+	useFastMatch                bool
 }
 
 // NewOptions creates a new set of options.
@@ -175,6 +179,17 @@ func NewOptions() Options {
 		matchRangePast:   defaultMatchRangePast,
 	}
 }
+
+func (o *options) SetUseFastMatch() Options {
+	opts := *o
+	opts.useFastMatch = true
+	return &opts
+}
+
+func (o *options) UseFastMatch() bool {
+	return o.useFastMatch
+}
+
 
 func (o *options) SetClockOptions(value clock.Options) Options {
 	opts := *o

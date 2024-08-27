@@ -149,6 +149,8 @@ type tagsFilter struct {
 	tagFilters []tagFilter
 	op         LogicalOp
 	opts       TagsFilterOptions
+	// The value of the metric name tag filter
+	nameFilterValue FilterValue
 }
 
 // NewTagsFilter creates a new tags filter.
@@ -158,8 +160,9 @@ func NewTagsFilter(
 	opts TagsFilterOptions,
 ) (TagsFilter, error) {
 	var (
-		nameFilter Filter
-		tagFilters = make([]tagFilter, 0, len(filters))
+		nameFilter      Filter
+		tagFilters      = make([]tagFilter, 0, len(filters))
+		nameFilterValue FilterValue
 	)
 	for name, value := range filters {
 		valFilter, err := NewFilterFromFilterValue(value)
@@ -169,6 +172,7 @@ func NewTagsFilter(
 		bName := []byte(name)
 		if bytes.Equal(opts.NameTagKey, bName) {
 			nameFilter = valFilter
+			nameFilterValue = value
 		} else {
 			tagFilters = append(tagFilters, tagFilter{
 				name:        bName,
@@ -178,10 +182,11 @@ func NewTagsFilter(
 	}
 	sort.Sort(tagFiltersByNameAsc(tagFilters))
 	return &tagsFilter{
-		nameFilter: nameFilter,
-		tagFilters: tagFilters,
-		op:         op,
-		opts:       opts,
+		nameFilter:      nameFilter,
+		tagFilters:      tagFilters,
+		op:              op,
+		opts:            opts,
+		nameFilterValue: nameFilterValue,
 	}, nil
 }
 
@@ -204,15 +209,25 @@ func (f *tagsFilter) String() string {
 	return buf.String()
 }
 
+func (f *tagsFilter) NameFilterValue() *FilterValue {
+	if f.nameFilter == nil { 
+		return nil
+	}
+	return &f.nameFilterValue
+}
+
 func (f *tagsFilter) Matches(id []byte, opts TagMatchOptions) (bool, error) {
 	if f.nameFilter == nil && len(f.tagFilters) == 0 {
 		return true, nil
 	}
-
 	name, tags, err := opts.NameAndTagsFn(id)
 	if err != nil {
 		return false, err
 	}
+	return f.MatchesWithNameAndTags(name, tags, opts)
+}
+
+func (f *tagsFilter) MatchesWithNameAndTags(name, tags []byte, opts TagMatchOptions) (bool, error) {
 	if f.nameFilter != nil {
 		match := f.nameFilter.Matches(name)
 		if match && f.op == Disjunction {

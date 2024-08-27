@@ -297,6 +297,7 @@ func (r *mockRuleSet) ToMutableRuleSet() rules.MutableRuleSet   { return nil }
 func (r *mockRuleSet) MappingRules() (view.MappingRules, error) { return nil, nil }
 func (r *mockRuleSet) RollupRules() (view.RollupRules, error)   { return nil, nil }
 func (r *mockRuleSet) Latest() (view.RuleSet, error)            { return view.RuleSet{}, nil }
+func (r *mockRuleSet) UseFastMatch()                            {}
 
 func testRuleSet() (kv.Store, cache.Cache, *ruleSet) {
 	store := mem.NewStore()

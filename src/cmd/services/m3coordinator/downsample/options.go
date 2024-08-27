@@ -24,6 +24,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"log"
 	"runtime"
 	"time"
 
@@ -303,6 +304,9 @@ type MatcherConfiguration struct {
 	// RequireNamespaceWatchOnInit returns the flag to ensure matcher is initialized with a loaded namespace watch.
 	// This only makes sense to use if the corresponding namespace / ruleset values are properly seeded.
 	RequireNamespaceWatchOnInit bool `yaml:"requireNamespaceWatchOnInit"`
+	// Use fast match for rollup and mapping rule matching.
+	// NB: fast matching mode doesn't support hot reloading of rules.
+	UseFastMatch bool `yaml:"useFastMatch"`
 }
 
 // MatcherCacheConfiguration is the configuration for the rule matcher cache.
@@ -736,6 +740,10 @@ func (cfg Configuration) newAggregator(o DownsamplerOptions) (agg, error) {
 
 	pools := o.newAggregatorPools()
 	ruleSetOpts := o.newAggregatorRulesOptions(pools)
+	if cfg.Matcher.UseFastMatch {
+		ruleSetOpts = ruleSetOpts.SetUseFastMatch()
+		logger.Info("Use fast mapping/rollup rule matching")
+	}
 
 	matcherOpts := matcher.NewOptions().
 		SetClockOptions(clockOpts).
@@ -745,6 +753,11 @@ func (cfg Configuration) newAggregator(o DownsamplerOptions) (agg, error) {
 		SetNamespaceResolver(namespace.NewResolver([]byte(namespaceTag), nil)).
 		SetRequireNamespaceWatchOnInit(cfg.Matcher.RequireNamespaceWatchOnInit).
 		SetInterruptedCh(o.InterruptedCh)
+
+	if cfg.Matcher.UseFastMatch {
+		matcherOpts = matcherOpts.SetUseFastMatch()
+		logger.Info("Use fast mapping/rollup rule matching")
+	}
 
 	// NB(r): If rules are being explicitly set in config then we are
 	// going to use an in memory KV store for rules and explicitly set them up.
@@ -766,8 +779,10 @@ func (cfg Configuration) newAggregator(o DownsamplerOptions) (agg, error) {
 		}
 
 		rulesetKeyFmt := matcherOpts.RuleSetKeyFn()([]byte("%s"))
-		rulesStoreOpts := ruleskv.NewStoreOptions(matcherOpts.NamespacesKey(),
-			rulesetKeyFmt, nil)
+		rulesStoreOpts := ruleskv.NewStoreOptions(
+			matcherOpts.NamespacesKey(),
+			rulesetKeyFmt,
+			nil)
 		rulesStore := ruleskv.NewStore(kvTxnMemStore, rulesStoreOpts)
 
 		ruleNamespaces, err := rulesStore.ReadNamespaces()
@@ -1041,6 +1056,15 @@ func ValidateAggregationRules(aggrRules RulesConfiguration) error {
 	ruleNamespaces, err := rulesStore.ReadNamespaces()
 	if err != nil {
 		return fmt.Errorf("ReadNamespaces from the rule store error: %w", err)
+	}
+	log.Default().Printf("Namespaces: %+v", ruleNamespaces)
+	for _, ns := range ruleNamespaces.Namespaces() {
+		rs, err := rulesStore.ReadRuleSet(string(ns.Name()))
+		if err != nil {
+			return fmt.Errorf("ReadRuleSet from the rule store error: %w", err)
+		}
+		as := rs.ActiveSet(time.Now().UnixNano())
+		log.Default().Printf("ActiveSet: %+v", as)
 	}
 
 	updateMetadata := rules.NewRuleSetUpdateHelper(0).

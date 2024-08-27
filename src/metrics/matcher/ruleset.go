@@ -23,6 +23,7 @@ package matcher
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -93,6 +94,7 @@ type ruleSet struct {
 	tombstoned   bool
 	activeSet    rules.ActiveSet
 	metrics      ruleSetMetrics
+	useFastMatch bool
 }
 
 func newRuleSet(
@@ -114,6 +116,7 @@ func newRuleSet(
 		version:            kv.UninitializedVersion,
 		metrics: newRuleSetMetrics(instrumentOpts.MetricsScope(),
 			instrumentOpts.TimerOptions()),
+		useFastMatch: opts.UseFastMatch(),
 	}
 	valueOpts := runtime.NewOptions().
 		SetInstrumentOptions(opts.InstrumentOptions()).
@@ -218,13 +221,25 @@ func (r *ruleSet) toRuleSet(value kv.Value) (interface{}, error) {
 	if err := value.Unmarshal(r.proto); err != nil {
 		return nil, err
 	}
-	return rules.NewRuleSetFromProto(value.Version(), r.proto, r.ruleSetOpts)
+	rs, err := rules.NewRuleSetFromProto(value.Version(), r.proto, r.ruleSetOpts)
+	if err != nil {
+		return nil, err
+	}
+	if r.useFastMatch {
+		rs.UseFastMatch()
+		log.Default().Printf("Use fast match for ruleset %s", rs.Namespace())
+	}
+	return rs, err
 }
 
 // process processes an ruleset update.
 func (r *ruleSet) process(value interface{}) error {
 	r.Lock()
 	ruleSet := value.(rules.RuleSet)
+	if r.useFastMatch {
+		ruleSet.UseFastMatch()
+		log.Default().Printf("Use fast match for rule set %s", ruleSet.Namespace())
+	}
 	r.version = ruleSet.Version()
 	r.cutoverNanos = ruleSet.CutoverNanos()
 	r.tombstoned = ruleSet.Tombstoned()
