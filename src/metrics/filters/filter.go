@@ -87,6 +87,9 @@ type TagsFilter interface {
 	fmt.Stringer
 	// Matches returns true if the conditions are met.
 	Matches(val []byte, opts TagMatchOptions) (bool, error)
+	MatchesWithNameAndTags(name, tags []byte, opts TagMatchOptions) (bool, error)
+
+	NameFilterValue() *FilterValue
 
 	// The original TagsFilter only works with encoded tags and need to decode tags using a decoder.
 	MatchTags(tags models.Tags) bool

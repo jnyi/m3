@@ -29,6 +29,7 @@ type StoreOptions struct {
 	NamespacesKey string
 	RuleSetKeyFmt string
 	Validator     rules.Validator
+	UseFastMatch  bool
 }
 
 // NewStoreOptions creates a new store options struct.

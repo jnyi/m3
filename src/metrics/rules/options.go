@@ -44,17 +44,31 @@ type Options interface {
 
 	// IsRollupIDFn returns the function that determines whether an id is a rollup id.
 	IsRollupIDFn() id.MatchIDFn
+
+	SetUseFastMatch() Options
+	UseFastMatch() bool
 }
 
 type options struct {
 	tagsFilterOpts filters.TagsFilterOptions
 	newRollupIDFn  id.NewIDFn
 	isRollupIDFn   id.MatchIDFn
+	useFastMatch   bool
 }
 
 // NewOptions creates a new set of options.
 func NewOptions() Options {
 	return &options{}
+}
+
+func (o *options) SetUseFastMatch() Options {
+	opts := *o
+	opts.useFastMatch = true
+	return &opts
+}
+
+func (o *options) UseFastMatch() bool {
+	return o.useFastMatch
 }
 
 func (o *options) SetTagsFilterOptions(value filters.TagsFilterOptions) Options {
