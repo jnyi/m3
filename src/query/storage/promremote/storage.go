@@ -163,6 +163,7 @@ func NewStorage(opts Options) (storage.Storage, error) {
 		enqueuedSamples: scope.Counter("enqueued_samples"),
 		writtenSamples:  scope.Counter("written_samples"),
 		droppedSamples:  scope.Counter("dropped_samples"),
+		failedSamples:   scope.Counter("failed_samples"),
 		inFlightSamples: scope.Gauge("in_flight_samples"),
 		batchWrites:     scope.Counter("batch_writes"),
 		tickWrites:      scope.Counter("tick_writes"),
@@ -193,6 +194,7 @@ type promStorage struct {
 	enqueuedSamples     tally.Counter
 	writtenSamples      tally.Counter
 	droppedSamples      tally.Counter
+	failedSamples       tally.Counter
 	inFlightSamples     tally.Gauge
 	inFlightSampleValue atomic.Int64
 	// writes are # of http requests to downstream remote endpoints
@@ -362,12 +364,21 @@ func (p *promStorage) Write(_ context.Context, query *storage.WriteQuery) error 
 		}
 		query = queryCopy
 	}
-	p.dataQueue <- query
-	// The data is enqueued successfully.
-	p.enqueuedSamples.Inc(samples)
-	p.inFlightSamples.Update(float64(p.inFlightSampleValue.Add(samples)))
-	p.dataQueueSize.Update(float64(len(p.dataQueue)))
-	return nil
+
+	select {
+	case p.dataQueue <- query:
+		// The data is enqueued successfully.
+		p.enqueuedSamples.Inc(samples)
+		p.inFlightSamples.Update(float64(p.inFlightSampleValue.Add(samples)))
+		p.dataQueueSize.Update(float64(len(p.dataQueue)))
+		return nil
+	case <-time.After(*p.opts.queueTimeout):
+		err := errors.New("timeout waiting for data queue for " + p.opts.queueTimeout.String())
+		p.droppedSamples.Inc(samples)
+		p.logger.Error("error enqueue samples for prom remote write", zap.Error(err),
+			zap.String("data", query.String()))
+		return err
+	}
 }
 
 func (p *promStorage) writeBatch(ctx context.Context, tenant tenantKey, queries []*storage.WriteQuery) error {
@@ -388,7 +399,7 @@ func (p *promStorage) writeBatch(ctx context.Context, tenant tenantKey, queries 
 	p.inFlightSamples.Update(float64(p.inFlightSampleValue.Add(-sampleCount)))
 	if err != nil {
 		p.errWrites.Inc(1)
-		p.droppedSamples.Inc(sampleCount)
+		p.failedSamples.Inc(sampleCount)
 		return err
 	}
 
@@ -399,7 +410,7 @@ func (p *promStorage) writeBatch(ctx context.Context, tenant tenantKey, queries 
 	err = p.write(ctx, metrics, endpoint, tenant, bytes.NewReader(encoded))
 	if err != nil {
 		p.errWrites.Inc(1)
-		p.droppedSamples.Inc(sampleCount)
+		p.failedSamples.Inc(sampleCount)
 	} else {
 		p.writtenSamples.Inc(sampleCount)
 	}
