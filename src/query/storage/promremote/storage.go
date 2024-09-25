@@ -157,6 +157,7 @@ func NewStorage(opts Options) (storage.Storage, error) {
 	}
 	s := &promStorage{
 		opts:            opts,
+		isShadowMode:    opts.retries == 0, // If retries is 0, it is in shadow mode, don't return errors to upstream.
 		client:          client,
 		endpointMetrics: initEndpointMetrics(opts.endpoints, scope),
 		scope:           scope,
@@ -186,6 +187,7 @@ func NewStorage(opts Options) (storage.Storage, error) {
 type promStorage struct {
 	unimplementedPromStorageMethods
 	opts            Options
+	isShadowMode    bool
 	client          *http.Client
 	endpointMetrics map[string]*instrument.HttpMetrics
 	scope           tally.Scope
@@ -358,9 +360,13 @@ func (p *promStorage) Write(_ context.Context, query *storage.WriteQuery) error 
 		queryCopy, err := storage.NewWriteQuery(deepCopy(query.Options()))
 		if err != nil {
 			p.droppedSamples.Inc(samples)
-			p.logger.Error("error copying write", zap.Error(err),
-				zap.String("write", query.String()))
-			return err
+			if p.isShadowMode {
+				p.logger.Error("error copying write", zap.Error(err),
+					zap.String("write", query.String()))
+				return nil
+			} else {
+				return err
+			}
 		}
 		query = queryCopy
 	}
@@ -371,14 +377,17 @@ func (p *promStorage) Write(_ context.Context, query *storage.WriteQuery) error 
 		p.enqueuedSamples.Inc(samples)
 		p.inFlightSamples.Update(float64(p.inFlightSampleValue.Add(samples)))
 		p.dataQueueSize.Update(float64(len(p.dataQueue)))
-		return nil
 	case <-time.After(*p.opts.queueTimeout):
 		err := errors.New("timeout waiting for data queue for " + p.opts.queueTimeout.String())
 		p.droppedSamples.Inc(samples)
-		p.logger.Error("error enqueue samples for prom remote write", zap.Error(err),
-			zap.String("data", query.String()))
-		return err
+		if p.isShadowMode {
+			p.logger.Error("error enqueue samples for prom remote write", zap.Error(err),
+				zap.String("data", query.String()))
+		} else {
+			return err
+		}
 	}
+	return nil
 }
 
 func (p *promStorage) writeBatch(ctx context.Context, tenant tenantKey, queries []*storage.WriteQuery) error {
