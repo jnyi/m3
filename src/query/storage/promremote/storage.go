@@ -159,6 +159,7 @@ func (dlq *deadLetterQueue) flush(p *promStorage, ctx context.Context, wg *sync.
 	for _, query := range dlq.queries {
 		p.appendSample(ctx, wg, pendingQuery, query)
 	}
+	g
 	dlq.queries = dlq.queries[:0] // empty the queue
 }
 
