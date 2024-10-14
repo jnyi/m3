@@ -118,8 +118,8 @@ func (wq *WriteQueue) Flush(ctx context.Context, p *promStorage) {
 	}
 }
 
-// introduce a dead letter queue to store the timed out samples in main queue
-// samples inside the dead letter queue will be flushed to the remote endpoint at next tick
+// introduce a dead letter queue to store the timed out samples from main queue
+// samples inside the dead letter queue are flushed to the remote endpoint at next tick
 // if dead letter queue is full, samples will be dropped to avoid cascading failures and retry storms
 type deadLetterQueue struct {
 	capacity int
@@ -143,6 +143,9 @@ func (dlq *deadLetterQueue) size() int {
 }
 
 func (dlq *deadLetterQueue) add(query *storage.WriteQuery) error {
+	if query == nil {
+		return nil
+	}
 	dlq.Lock()
 	defer dlq.Unlock()
 	if len(dlq.queries) < dlq.capacity {
@@ -156,10 +159,10 @@ func (dlq *deadLetterQueue) add(query *storage.WriteQuery) error {
 func (dlq *deadLetterQueue) flush(p *promStorage, ctx context.Context, wg *sync.WaitGroup, pendingQuery map[tenantKey]*WriteQueue) {
 	dlq.Lock()
 	defer dlq.Unlock()
+	p.dlqSize.Update(float64(len(dlq.queries)))
 	for _, query := range dlq.queries {
 		p.appendSample(ctx, wg, pendingQuery, query)
 	}
-	g
 	dlq.queries = dlq.queries[:0] // empty the queue
 }
 
@@ -200,6 +203,9 @@ func NewStorage(opts Options) (storage.Storage, error) {
 			queriesWithFixedTenants[tenant] = NewWriteQueue(tenant, opts.queueSize)
 		}
 	}
+	// large data queue size to avoid dropping samples
+	dataQueueCapacity := (opts.retries + 1) * len(opts.tenantRules) * opts.queueSize
+	opts.logger.Info("Creating data queue", zap.Int("capacity", dataQueueCapacity))
 	s := &promStorage{
 		opts:            opts,
 		client:          client,
@@ -217,9 +223,9 @@ func NewStorage(opts Options) (storage.Storage, error) {
 		retryWrites:     scope.Counter("retry_writes"),
 		dupWrites:       scope.Counter("duplicate_writes"),
 		logger:          opts.logger,
-		dataQueue:       make(chan *storage.WriteQuery, (opts.retries+1)*len(opts.tenantRules)*opts.queueSize),
+		dataQueue:       make(chan *storage.WriteQuery, dataQueueCapacity),
 		dataQueueSize:   scope.Gauge("data_queue_size"),
-		dlq:             newDeadLetterQueue(opts.logger, len(opts.tenantRules)*opts.queueSize),
+		dlq:             newDeadLetterQueue(opts.logger, dataQueueCapacity),
 		dlqSize:         scope.Gauge("dead_letter_queue_size"),
 		workerPool:      xsync.NewWorkerPool(opts.poolSize),
 		writeLoopDone:   make(chan struct{}),

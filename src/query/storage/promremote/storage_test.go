@@ -405,13 +405,23 @@ func TestDeadLetterQueue(t *testing.T) {
 		return promStorage
 	}
 
-	t.Run("dead letter queue", func(t *testing.T) {
+	t.Run("dead letter queue is full", func(t *testing.T) {
 		scope := tally.NewTestScope("test_scope", map[string]string{})
 		defer verifyMetrics(t, scope)
-		runDLQTest(scope, time.Hour, time.Millisecond, 10)
+		runDLQTest(scope, time.Hour, time.Millisecond, 100)
+		tallytest.AssertCounterNonZero(
+			t, scope.Snapshot(), "test_scope.prom_remote_storage.dropped_samples",
+			map[string]string{},
+		)
+	})
+
+	t.Run("large enqueue timeout", func(t *testing.T) {
+		scope := tally.NewTestScope("test_scope", map[string]string{})
+		defer verifyMetrics(t, scope)
+		runDLQTest(scope, time.Second, 5*time.Second, 10)
 		tallytest.AssertCounterValue(
-			t, 1, scope.Snapshot(), "test_scope.prom_remote_storage.write.total",
-			map[string]string{"endpoint_name": "testEndpoint", "code": "200"},
+			t, 0, scope.Snapshot(), "test_scope.prom_remote_storage.dropped_samples",
+			map[string]string{},
 		)
 	})
 }
