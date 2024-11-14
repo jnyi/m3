@@ -543,9 +543,11 @@ func (p *promStorage) write(
 			err = nil
 			break
 		}
-		p.retryWrites.Inc(1)
-		time.Sleep(backoff)
-		backoff *= 2
+		if i > 0 { // only do backoff if we are going to retry
+			p.retryWrites.Inc(1)
+			time.Sleep(backoff)
+			backoff *= 2
+		}
 	}
 	methodDuration := time.Since(start)
 	metrics.RecordResponse(status, methodDuration)
