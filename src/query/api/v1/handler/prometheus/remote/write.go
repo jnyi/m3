@@ -257,6 +257,7 @@ func NewPromWriteHandler(options options.HandlerOptions) (http.Handler, error) {
 }
 
 type promWriteMetrics struct {
+	writeScope               tally.Scope
 	writeSuccess             tally.Counter
 	writeRejectTooOld        tally.Counter
 	writeErrorsServer        tally.Counter
@@ -285,6 +286,7 @@ func newPromWriteMetrics(scope tally.Scope) (promWriteMetrics, error) {
 		return promWriteMetrics{}, err
 	}
 	return promWriteMetrics{
+		writeScope:               scope.SubScope("write"),
 		writeSuccess:             scope.SubScope("write").Counter("success"),
 		writeRejectTooOld:        scope.SubScope("write").Counter("reject"),
 		writeErrorsServer:        scope.SubScope("write").Tagged(map[string]string{"code": "5XX"}).Counter("errors"),
@@ -555,6 +557,11 @@ func (h *PromWriteHandler) parseRequest(
 		for i := range req.Timeseries {
 			req.Timeseries[i].Type = tp
 		}
+	}
+
+	if clusterType := r.Header.Get(headers.ClusterTypeHeader); clusterType != "" {
+		// clusterType header is used with broader scope as client type.
+		h.metrics.writeScope.Tagged(map[string]string{"client_type": clusterType}).Counter("total").Inc(1)
 	}
 
 	if h.remoteWriteOpts.rejectOldSamples {
