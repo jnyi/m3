@@ -234,4 +234,7 @@ const (
 	// RelatedQueriesHeader headers may NOT be sent. When multiple values are required, they can be separated
 	// by a semicolons (e.g. startTs:endTs;startTs:endTs).
 	RelatedQueriesHeader = M3HeaderPrefix + "Related-Queries"
+
+	// ClusterTypeHeader is the header used to specify which cluster the metrics is coming from.
+	ClusterTypeHeader = "clusterType"
 )
