@@ -142,7 +142,7 @@ type metricTypesValidationConfiguration struct {
 func (c metricTypesValidationConfiguration) NewMetricTypesFn() MetricTypesFn {
 	return func(tagFilters filters.TagFilterValueMap) ([]metric.Type, error) {
 		allowed := make([]metric.Type, 0, len(c.Allowed))
-		filterValue, exists := tagFilters[c.TypeTag]
+		filterValue, exists := tagFilters[filters.NewTagFilterValueMapKey(c.TypeTag, false)]
 		if !exists {
 			// If there is not type filter provided, the filter may match any allowed type.
 			allowed = append(allowed, c.Allowed...)

@@ -37,23 +37,33 @@ func TestParseTagFilterValueMap(t *testing.T) {
 		{
 			str: "tagName1:tagValue1",
 			expected: TagFilterValueMap{
-				"tagName1": FilterValue{Pattern: "tagValue1", Negate: false},
+				TagFilterValueMapKey{"tagName1", false}: FilterValue{Pattern: "tagValue1", Negate: false},
 			},
 		},
 		{
 			str: "tagName1:tagValue1 tagName2:tagValue2",
 			expected: TagFilterValueMap{
-				"tagName1": FilterValue{Pattern: "tagValue1", Negate: false},
-				"tagName2": FilterValue{Pattern: "tagValue2", Negate: false},
+				TagFilterValueMapKey{"tagName1", false}: FilterValue{Pattern: "tagValue1", Negate: false},
+				TagFilterValueMapKey{"tagName2", false}: FilterValue{Pattern: "tagValue2", Negate: false},
 			},
 		},
 		{
 			str: "  tagName1:tagValue1    tagName2:tagValue2   tagName3:tagValue3  tagName4:tagValue4",
 			expected: TagFilterValueMap{
-				"tagName1": FilterValue{Pattern: "tagValue1", Negate: false},
-				"tagName2": FilterValue{Pattern: "tagValue2", Negate: false},
-				"tagName3": FilterValue{Pattern: "tagValue3", Negate: false},
-				"tagName4": FilterValue{Pattern: "tagValue4", Negate: false},
+				TagFilterValueMapKey{"tagName1", false}: FilterValue{Pattern: "tagValue1", Negate: false},
+				TagFilterValueMapKey{"tagName2", false}: FilterValue{Pattern: "tagValue2", Negate: false},
+				TagFilterValueMapKey{"tagName3", false}: FilterValue{Pattern: "tagValue3", Negate: false},
+				TagFilterValueMapKey{"tagName4", false}: FilterValue{Pattern: "tagValue4", Negate: false},
+			},
+		},
+		{
+			str: "  tagName1:tagValue1    tagName2:tagValue2   tagName3:tagValue3  tagName4:tagValue4  !tagName5:*",
+			expected: TagFilterValueMap{
+				TagFilterValueMapKey{"tagName1", false}: FilterValue{Pattern: "tagValue1", Negate: false},
+				TagFilterValueMapKey{"tagName2", false}: FilterValue{Pattern: "tagValue2", Negate: false},
+				TagFilterValueMapKey{"tagName3", false}: FilterValue{Pattern: "tagValue3", Negate: false},
+				TagFilterValueMapKey{"tagName4", false}: FilterValue{Pattern: "tagValue4", Negate: false},
+				TagFilterValueMapKey{"tagName5", true}:  FilterValue{Pattern: "*", Negate: false},
 			},
 		},
 	}
@@ -72,6 +82,7 @@ func TestParseTagFilterValueMapErrors(t *testing.T) {
 		"tagName1:tagValue1  tagName2:tagValue2 tagName1:tagValue3",
 		"tagName:",
 		":tagValue",
+		"!tagValue5:xyz",
 	}
 
 	for _, input := range inputs {
@@ -89,9 +100,9 @@ func TestEmptyTagsFilterMatches(t *testing.T) {
 }
 
 func TestNonexistTagsFilterMatches(t *testing.T) {
-	filters := map[string]FilterValue{
-		"tagName1": FilterValue{Pattern: "tagValue1"},
-		"tagName2": FilterValue{Pattern: "*"},
+	filters := map[TagFilterValueMapKey]FilterValue{
+		TagFilterValueMapKey{"tagName1", false}: FilterValue{Pattern: "tagValue1"},
+		TagFilterValueMapKey{"tagName2", false}: FilterValue{Pattern: "*"},
 	}
 	f, err := NewTagsFilter(filters, Conjunction, testTagsFilterOptions())
 	require.Equal(t, (*FilterValue)(nil), f.NameFilterValue())
@@ -110,18 +121,23 @@ func TestNonexistTagsFilterMatches(t *testing.T) {
 }
 
 func TestTagsFilterMatchesNoNameTag(t *testing.T) {
-	filters := map[string]FilterValue{
-		"tagName1": FilterValue{Pattern: "tagValue1"},
-		"tagName2": FilterValue{Pattern: "tagValue2"},
+	filters := map[TagFilterValueMapKey]FilterValue{
+		TagFilterValueMapKey{"tagName1", false}: FilterValue{Pattern: "tagValue1"},
+		TagFilterValueMapKey{"tagName2", false}: FilterValue{Pattern: "tagValue2"},
+		TagFilterValueMapKey{"tagName4", true}:  FilterValue{Pattern: "*"},
+		TagFilterValueMapKey{"tagName5", false}: FilterValue{Pattern: "tagValue5"},
 	}
 	f, err := NewTagsFilter(filters, Conjunction, testTagsFilterOptions())
 	require.Equal(t, (*FilterValue)(nil), f.NameFilterValue())
 	inputs := []mockFilterData{
-		{val: "tagName1=tagValue1,tagName2=tagValue2", match: true},
-		{val: "tagName0=tagValue0,tagName1=tagValue1,tagName2=tagValue2,tagName3=tagValue3", match: true},
+		{val: "tagName1=tagValue1,tagName2=tagValue2,tagName5=tagValue5", match: true},
+		{val: "tagName0=tagValue0,tagName1=tagValue1,tagName2=tagValue2,tagName3=tagValue3,tagName5=tagValue5", match: true},
 		{val: "tagName1=tagValue1", match: false},
 		{val: "tagName2=tagValue2", match: false},
 		{val: "tagName1=tagValue2,tagName2=tagValue1", match: false},
+		{val: "tagName0=tagValue0,tagName1=tagValue1,tagName2=tagValue2,tagName3=tagValue3,tagName4=tagValue4", match: false},
+		{val: "tagName0=tagValue0,tagName1=tagValue1,tagName2=tagValue2,tagName4=tagValue4,tagName5=tagValue5", match: false},
+		{val: "tagName0=tagValue0,tagName1=tagValue1,tagName2=tagValue2,tagName5=tagValue5,tagName6=tagValue6", match: true},
 	}
 	require.NoError(t, err)
 	for _, input := range inputs {
@@ -130,7 +146,12 @@ func TestTagsFilterMatchesNoNameTag(t *testing.T) {
 		require.Equal(t, input.match, matches)
 	}
 
-	f, err = NewTagsFilter(filters, Disjunction, testTagsFilterOptions())
+	disjunctionFilters := map[TagFilterValueMapKey]FilterValue{
+		TagFilterValueMapKey{"tagName1", false}: FilterValue{Pattern: "tagValue1"},
+		TagFilterValueMapKey{"tagName2", false}: FilterValue{Pattern: "tagValue2"},
+		TagFilterValueMapKey{"tagName5", false}: FilterValue{Pattern: "tagValue5"},
+	}
+	f, err = NewTagsFilter(disjunctionFilters, Disjunction, testTagsFilterOptions())
 	require.Equal(t, (*FilterValue)(nil), f.NameFilterValue())
 	inputs = []mockFilterData{
 		{val: "tagName1=tagValue1,tagName2=tagValue2", match: true},
@@ -152,10 +173,11 @@ func TestTagsFilterMatchesNoNameTag(t *testing.T) {
 }
 
 func TestTagsFilterMatchesWithNameTag(t *testing.T) {
-	filters := map[string]FilterValue{
-		"name":     FilterValue{Pattern: "foo"},
-		"tagName1": FilterValue{Pattern: "tagValue1"},
-		"tagName2": FilterValue{Pattern: "tagValue2"},
+	filters := map[TagFilterValueMapKey]FilterValue{
+		TagFilterValueMapKey{"name", false}:     FilterValue{Pattern: "foo"},
+		TagFilterValueMapKey{"tagName1", false}: FilterValue{Pattern: "tagValue1"},
+		TagFilterValueMapKey{"tagName2", false}: FilterValue{Pattern: "tagValue2"},
+		TagFilterValueMapKey{"tagName4", true}:  FilterValue{Pattern: "*"},
 	}
 
 	f, err := NewTagsFilter(filters, Conjunction, testTagsFilterOptions())
@@ -168,6 +190,7 @@ func TestTagsFilterMatchesWithNameTag(t *testing.T) {
 		{val: "tagName1=tagValue1,tagName2=tagValue2", match: false, err: errInvalidMetric},
 		{val: "foo+tagName1=tagValue1", match: false},
 		{val: "foo+tagName1=tagValue2,tagName2=tagValue1", match: false},
+		{val: "foo+tagName1=tagValue2,tagName2=tagValue1,tagName4=tagValue4", match: false},
 	}
 	for _, input := range inputs {
 		matches, err := f.Matches([]byte(input.val), testTagsMatchOptionsWithNameTag())
@@ -179,7 +202,16 @@ func TestTagsFilterMatchesWithNameTag(t *testing.T) {
 		require.Equal(t, input.match, matches)
 	}
 
+	// We should hit an error if we try to have an exclude rule with disjunction
 	f, err = NewTagsFilter(filters, Disjunction, testTagsFilterOptions())
+	require.Error(t, err)
+
+	disjunctionFilters := map[TagFilterValueMapKey]FilterValue{
+		TagFilterValueMapKey{"name", false}:     FilterValue{Pattern: "foo"},
+		TagFilterValueMapKey{"tagName1", false}: FilterValue{Pattern: "tagValue1"},
+		TagFilterValueMapKey{"tagName2", false}: FilterValue{Pattern: "tagValue2"},
+	}
+	f, err = NewTagsFilter(disjunctionFilters, Disjunction, testTagsFilterOptions())
 	require.NoError(t, err)
 	inputs = []mockFilterData{
 		{val: "foo+tagName1=tagValue1,tagName2=tagValue2", match: true},
@@ -204,9 +236,9 @@ func TestTagsFilterMatchesWithNameTag(t *testing.T) {
 }
 
 func TestTagsFilterStringNoNameTag(t *testing.T) {
-	filters := map[string]FilterValue{
-		"tagName1": FilterValue{Pattern: "tagValue1"},
-		"tagName2": FilterValue{Pattern: "tagValue2"},
+	filters := map[TagFilterValueMapKey]FilterValue{
+		TagFilterValueMapKey{"tagName1", false}: FilterValue{Pattern: "tagValue1"},
+		TagFilterValueMapKey{"tagName2", false}: FilterValue{Pattern: "tagValue2"},
 	}
 	f, err := NewTagsFilter(filters, Conjunction, testTagsFilterOptions())
 	require.NoError(t, err)
@@ -220,17 +252,27 @@ func TestTagsFilterStringNoNameTag(t *testing.T) {
 }
 
 func TestTagsFilterStringWithNameTag(t *testing.T) {
-	filters := map[string]FilterValue{
-		"name":     FilterValue{Pattern: "foo"},
-		"tagName1": FilterValue{Pattern: "tagValue1"},
-		"tagName2": FilterValue{Pattern: "tagValue2"},
+	filters := map[TagFilterValueMapKey]FilterValue{
+		TagFilterValueMapKey{"name", false}:     FilterValue{Pattern: "foo"},
+		TagFilterValueMapKey{"tagName1", false}: FilterValue{Pattern: "tagValue1"},
+		TagFilterValueMapKey{"tagName2", false}: FilterValue{Pattern: "tagValue2"},
+		TagFilterValueMapKey{"tagName3", true}:  FilterValue{Pattern: "*"},
 	}
 	f, err := NewTagsFilter(filters, Conjunction, testTagsFilterOptions())
 	require.NoError(t, err)
 	tf := f.(*tagsFilter)
-	require.Equal(t, `name:Equals("foo") && tagName1:Equals("tagValue1") && tagName2:Equals("tagValue2")`, tf.String())
+	require.Equal(t, `name:Equals("foo") && tagName1:Equals("tagValue1") && tagName2:Equals("tagValue2") && !tagName3:All`, tf.String())
 
+	// We should hit an error if we try to have an exclude rule with disjunction
 	f, err = NewTagsFilter(filters, Disjunction, testTagsFilterOptions())
+	require.Error(t, err)
+
+	disjunctionFilters := map[TagFilterValueMapKey]FilterValue{
+		TagFilterValueMapKey{"name", false}:     FilterValue{Pattern: "foo"},
+		TagFilterValueMapKey{"tagName1", false}: FilterValue{Pattern: "tagValue1"},
+		TagFilterValueMapKey{"tagName2", false}: FilterValue{Pattern: "tagValue2"},
+	}
+	f, err = NewTagsFilter(disjunctionFilters, Disjunction, testTagsFilterOptions())
 	require.NoError(t, err)
 	tf = f.(*tagsFilter)
 	require.Equal(t, `name:Equals("foo") || tagName1:Equals("tagValue1") || tagName2:Equals("tagValue2")`, tf.String())
@@ -244,23 +286,23 @@ func TestValidateTagsFilter(t *testing.T) {
 		{
 			str: "tagName1:tagValue1",
 			expected: TagFilterValueMap{
-				"tagName1": FilterValue{Pattern: "tagValue1", Negate: false},
+				TagFilterValueMapKey{"tagName1", false}: FilterValue{Pattern: "tagValue1", Negate: false},
 			},
 		},
 		{
 			str: "tagName1:tagValue1 tagName2:tagValue2*tagValue3",
 			expected: TagFilterValueMap{
-				"tagName1": FilterValue{Pattern: "tagValue1", Negate: false},
-				"tagName2": FilterValue{Pattern: "tagValue2*tagValue3", Negate: false},
+				TagFilterValueMapKey{"tagName1", false}: FilterValue{Pattern: "tagValue1", Negate: false},
+				TagFilterValueMapKey{"tagName2", false}: FilterValue{Pattern: "tagValue2*tagValue3", Negate: false},
 			},
 		},
 		{
 			str: "  tagName1:tagValue1?[0-9][!a-z]9    tagName2:{tagValue21,tagValue22}*   tagName3:tagValue3  tagName4:tagValue4",
 			expected: TagFilterValueMap{
-				"tagName1": FilterValue{Pattern: "tagValue1?[0-9][!a-z]9", Negate: false},
-				"tagName2": FilterValue{Pattern: "{tagValue21,tagValue22}*", Negate: false},
-				"tagName3": FilterValue{Pattern: "tagValue3", Negate: false},
-				"tagName4": FilterValue{Pattern: "tagValue4", Negate: false},
+				TagFilterValueMapKey{"tagName1", false}: FilterValue{Pattern: "tagValue1?[0-9][!a-z]9", Negate: false},
+				TagFilterValueMapKey{"tagName2", false}: FilterValue{Pattern: "{tagValue21,tagValue22}*", Negate: false},
+				TagFilterValueMapKey{"tagName3", false}: FilterValue{Pattern: "tagValue3", Negate: false},
+				TagFilterValueMapKey{"tagName4", false}: FilterValue{Pattern: "tagValue4", Negate: false},
 			},
 		},
 	}
@@ -280,37 +322,37 @@ func TestValidateTagsFilterWithSpecialChar(t *testing.T) {
 		{
 			str: "tagName1#tagValue1",
 			expected: TagFilterValueMap{
-				"tagName1": FilterValue{Pattern: "tagValue1", Negate: false},
+				TagFilterValueMapKey{"tagName1", false}: FilterValue{Pattern: "tagValue1", Negate: false},
 			},
 		},
 		{
 			// NB: '#' has a high priority than ':'.
 			str: "tagName1#tagValue1:suffix",
 			expected: TagFilterValueMap{
-				"tagName1": FilterValue{Pattern: "tagValue1:suffix", Negate: false},
+				TagFilterValueMapKey{"tagName1", false}: FilterValue{Pattern: "tagValue1:suffix", Negate: false},
 			},
 		},
 		{
 			// NB: '#' has a high priority than ':'.
 			str: "tagName1#tagValue1:suffix:",
 			expected: TagFilterValueMap{
-				"tagName1": FilterValue{Pattern: "tagValue1:suffix:", Negate: false},
+				TagFilterValueMapKey{"tagName1", false}: FilterValue{Pattern: "tagValue1:suffix:", Negate: false},
 			},
 		},
 		{
 			str: "tagName1#tagValue1:suffix:a:b:: tagName2:tagValue2*tagValue3#a#",
 			expected: TagFilterValueMap{
-				"tagName1": FilterValue{Pattern: "tagValue1:suffix:a:b::", Negate: false},
-				"tagName2": FilterValue{Pattern: "tagValue2*tagValue3#a#", Negate: false},
+				TagFilterValueMapKey{"tagName1", false}: FilterValue{Pattern: "tagValue1:suffix:a:b::", Negate: false},
+				TagFilterValueMapKey{"tagName2", false}: FilterValue{Pattern: "tagValue2*tagValue3#a#", Negate: false},
 			},
 		},
 		{
 			str: "  tagName1#tagValue1?[0-9][!a-z]9    tagName2#a:{tagValue21,tagValue22}*   tagName3:tagValue3  tagName4:tagValue4",
 			expected: TagFilterValueMap{
-				"tagName1": FilterValue{Pattern: "tagValue1?[0-9][!a-z]9", Negate: false},
-				"tagName2": FilterValue{Pattern: "a:{tagValue21,tagValue22}*", Negate: false},
-				"tagName3": FilterValue{Pattern: "tagValue3", Negate: false},
-				"tagName4": FilterValue{Pattern: "tagValue4", Negate: false},
+				TagFilterValueMapKey{"tagName1", false}: FilterValue{Pattern: "tagValue1?[0-9][!a-z]9", Negate: false},
+				TagFilterValueMapKey{"tagName2", false}: FilterValue{Pattern: "a:{tagValue21,tagValue22}*", Negate: false},
+				TagFilterValueMapKey{"tagName3", false}: FilterValue{Pattern: "tagValue3", Negate: false},
+				TagFilterValueMapKey{"tagName4", false}: FilterValue{Pattern: "tagValue4", Negate: false},
 			},
 		},
 	}
@@ -350,6 +392,10 @@ func TestValidateTagsFilterError(t *testing.T) {
 		{
 			str: "tagName1:aggr#tagValue1:suffix#",
 			err: "invalid filter tagName1:aggr#tagValue1:suffix#: expecting tag pattern pairs",
+		},
+		{
+			str: "!tagName1:aggr",
+			err: "invalid filter !tagName1:aggr: negation only supported for wildcard patterns",
 		},
 	}
 

@@ -666,10 +666,10 @@ func TestActiveRuleSetForwardMatchWithMappingRulesFast(t *testing.T) {
 		},
 		{
 			// No matcing because the closest rule requires a different metric name, "metric1|mtagName1=mtagValue2".
-			id:            "metric2|mtagName1=mtagValue2",
-			matchFrom:     25000,
-			matchTo:       25001,
-			expireAtNanos: 30000,
+			id:                  "metric2|mtagName1=mtagValue2",
+			matchFrom:           25000,
+			matchTo:             25001,
+			expireAtNanos:       30000,
 			forExistingIDResult: metadata.DefaultStagedMetadatas,
 		},
 		{
@@ -682,10 +682,10 @@ func TestActiveRuleSetForwardMatchWithMappingRulesFast(t *testing.T) {
 		},
 		{
 			// No matching because the closest rule requires a different metric name, "metric1|mtagName1=mtagValue1".
-			id:            "metric2|mtagName1=mtagValue1",
-			matchFrom:     10000,
-			matchTo:       40000,
-			expireAtNanos: 100000,
+			id:                  "metric2|mtagName1=mtagValue1",
+			matchFrom:           10000,
+			matchTo:             40000,
+			expireAtNanos:       100000,
 			forExistingIDResult: metadata.DefaultStagedMetadatas,
 		},
 		{
@@ -894,33 +894,33 @@ func TestActiveRuleSetForwardMatchWithMappingRulesFast(t *testing.T) {
 		},
 		{
 			// No matching because the closest rule requires a different metric name, "metric2|mtagName1=mtagValue3",
-			id:            "metric1|mtagName1=mtagValue3",
-			matchFrom:     4000,
-			matchTo:       9000,
-			expireAtNanos: 10000,
+			id:                  "metric1|mtagName1=mtagValue3",
+			matchFrom:           4000,
+			matchTo:             9000,
+			expireAtNanos:       10000,
 			forExistingIDResult: metadata.DefaultStagedMetadatas,
 		},
 		{
 			// No matching because the closest rule requires a different metric name, "metric1|mtagName1=mtagValue2",
-			id:            "metric2|mtagName1=mtagValue2",
-			matchFrom:     10000,
-			matchTo:       40000,
-			expireAtNanos: 100000,
+			id:                  "metric2|mtagName1=mtagValue2",
+			matchFrom:           10000,
+			matchTo:             40000,
+			expireAtNanos:       100000,
 			forExistingIDResult: metadata.DefaultStagedMetadatas,
 		},
 		{
-			id:            "metric1|shouldDropTagName1=shouldDropTagValue1",
-			matchFrom:     25000,
-			matchTo:       25001,
-			expireAtNanos: 30000,
+			id:                  "metric1|shouldDropTagName1=shouldDropTagValue1",
+			matchFrom:           25000,
+			matchTo:             25001,
+			expireAtNanos:       30000,
 			forExistingIDResult: metadata.DefaultStagedMetadatas,
 		},
 		{
 			// No matching because the closest rule requires a different metric name, "metric1|shouldDrop2TagName1=shouldDrop2TagValue1",
-			id:            "metric2|shouldDrop2TagName1=shouldDrop2TagValue1",
-			matchFrom:     25000,
-			matchTo:       25001,
-			expireAtNanos: 30000,
+			id:                  "metric2|shouldDrop2TagName1=shouldDrop2TagValue1",
+			matchFrom:           25000,
+			matchTo:             25001,
+			expireAtNanos:       30000,
 			forExistingIDResult: metadata.DefaultStagedMetadatas,
 		},
 		{
@@ -948,10 +948,10 @@ func TestActiveRuleSetForwardMatchWithMappingRulesFast(t *testing.T) {
 		},
 		{
 			// No matching because the closest rule requires a different metric name, "metric1|shouldDrop2TagName1=shouldDrop2TagValue1",
-			id:            "metric3|shouldDrop2TagName1=shouldDrop2TagValue1",
-			matchFrom:     25000,
-			matchTo:       25001,
-			expireAtNanos: 30000,
+			id:                  "metric3|shouldDrop2TagName1=shouldDrop2TagValue1",
+			matchFrom:           25000,
+			matchTo:             25001,
+			expireAtNanos:       30000,
 			forExistingIDResult: metadata.DefaultStagedMetadatas,
 		},
 	}
@@ -1979,12 +1979,12 @@ func TestActiveRuleSetForwardMatchWithRollupRulesFast(t *testing.T) {
 			},
 		},
 		{
-			id:            "metric1|rtagName1=rtagValue2",
-			matchFrom:     25000,
-			matchTo:       25001,
-			expireAtNanos: 30000,
-			keepOriginal:  false,
-			forExistingIDResult: metadata.DefaultStagedMetadatas,
+			id:                    "metric1|rtagName1=rtagValue2",
+			matchFrom:             25000,
+			matchTo:               25001,
+			expireAtNanos:         30000,
+			keepOriginal:          false,
+			forExistingIDResult:   metadata.DefaultStagedMetadatas,
 			forNewRollupIDsResult: []IDWithMetadatas{},
 		},
 		{
@@ -2671,12 +2671,12 @@ func TestActiveRuleSetForwardMatchWithRollupRulesFast(t *testing.T) {
 			},
 		},
 		{
-			id:            "metric2|rtagName1=rtagValue1,rtagName2=rtagValue2,rtagName3=rtagValue3",
-			matchFrom:     25000,
-			matchTo:       25001,
-			expireAtNanos: 30000,
-			keepOriginal:  false,
-			forExistingIDResult: metadata.DefaultStagedMetadatas,
+			id:                    "metric2|rtagName1=rtagValue1,rtagName2=rtagValue2,rtagName3=rtagValue3",
+			matchFrom:             25000,
+			matchTo:               25001,
+			expireAtNanos:         30000,
+			keepOriginal:          false,
+			forExistingIDResult:   metadata.DefaultStagedMetadatas,
 			forNewRollupIDsResult: []IDWithMetadatas{},
 		},
 		{
@@ -2742,22 +2742,22 @@ func TestActiveRuleSetForwardMatchWithRollupRulesFast(t *testing.T) {
 			forExistingIDResult: metadata.DefaultStagedMetadatas,
 		},
 		{
-			id:            "metric2|rtagName1=rtagValue1,rtagName2=rtagValue2,rtagName3=rtagValue3",
-			matchFrom:     10000,
-			matchTo:       40000,
-			expireAtNanos: 90000,
-			keepOriginal:  false,
-			forExistingIDResult: metadata.DefaultStagedMetadatas,
+			id:                    "metric2|rtagName1=rtagValue1,rtagName2=rtagValue2,rtagName3=rtagValue3",
+			matchFrom:             10000,
+			matchTo:               40000,
+			expireAtNanos:         90000,
+			keepOriginal:          false,
+			forExistingIDResult:   metadata.DefaultStagedMetadatas,
 			forNewRollupIDsResult: []IDWithMetadatas{},
 		},
 		//nolint:dupl
 		{
-			id:            "metric2|rtagName1=rtagValue3,rtagName2=rtagValue2,rtagName3=rtagValue3",
-			matchFrom:     100000,
-			matchTo:       110000,
-			expireAtNanos: 120000,
-			keepOriginal:  false,
-			forExistingIDResult: metadata.DefaultStagedMetadatas,
+			id:                    "metric2|rtagName1=rtagValue3,rtagName2=rtagValue2,rtagName3=rtagValue3",
+			matchFrom:             100000,
+			matchTo:               110000,
+			expireAtNanos:         120000,
+			keepOriginal:          false,
+			forExistingIDResult:   metadata.DefaultStagedMetadatas,
 			forNewRollupIDsResult: []IDWithMetadatas{},
 		},
 	}
@@ -4739,8 +4739,8 @@ func TestMatchedKeepOriginal(t *testing.T) {
 
 	filter, err := filters.NewTagsFilter(
 		filters.TagFilterValueMap{
-			"foo": filters.FilterValue{Pattern: "bar"},
-			"baz": filters.FilterValue{Pattern: "bat"},
+			filters.TagFilterValueMapKey{"foo", false}: filters.FilterValue{Pattern: "bar"},
+			filters.TagFilterValueMapKey{"baz", false}: filters.FilterValue{Pattern: "bat"},
 		},
 		filters.Conjunction,
 		testTagsFilterOptions(),
@@ -4834,43 +4834,43 @@ func TestMatchedKeepOriginal(t *testing.T) {
 
 func testMappingRules(t *testing.T) []*mappingRule {
 	filter1, err := filters.NewTagsFilter(
-		filters.TagFilterValueMap{"mtagName1": filters.FilterValue{Pattern: "mtagValue1"}},
+		filters.TagFilterValueMap{filters.TagFilterValueMapKey{"mtagName1", false}: filters.FilterValue{Pattern: "mtagValue1"}},
 		filters.Conjunction,
 		testTagsFilterOptions(),
 	)
 	require.NoError(t, err)
 	filter2, err := filters.NewTagsFilter(
-		filters.TagFilterValueMap{"mtagName1": filters.FilterValue{Pattern: "mtagValue2"}},
+		filters.TagFilterValueMap{filters.TagFilterValueMapKey{"mtagName1", false}: filters.FilterValue{Pattern: "mtagValue2"}},
 		filters.Conjunction,
 		testTagsFilterOptions(),
 	)
 	require.NoError(t, err)
 	filter3, err := filters.NewTagsFilter(
-		filters.TagFilterValueMap{"mtagName1": filters.FilterValue{Pattern: "mtagValue3"}},
+		filters.TagFilterValueMap{filters.TagFilterValueMapKey{"mtagName1", false}: filters.FilterValue{Pattern: "mtagValue3"}},
 		filters.Conjunction,
 		testTagsFilterOptions(),
 	)
 	require.NoError(t, err)
 	filter4, err := filters.NewTagsFilter(
-		filters.TagFilterValueMap{"mtagName1": filters.FilterValue{Pattern: "mtagValue4"}},
+		filters.TagFilterValueMap{filters.TagFilterValueMapKey{"mtagName1", false}: filters.FilterValue{Pattern: "mtagValue4"}},
 		filters.Conjunction,
 		testTagsFilterOptions(),
 	)
 	require.NoError(t, err)
 	filter5, err := filters.NewTagsFilter(
-		filters.TagFilterValueMap{"shouldDropTagName1": filters.FilterValue{Pattern: "shouldDropTagValue1"}},
+		filters.TagFilterValueMap{filters.TagFilterValueMapKey{"shouldDropTagName1", false}: filters.FilterValue{Pattern: "shouldDropTagValue1"}},
 		filters.Conjunction,
 		testTagsFilterOptions(),
 	)
 	require.NoError(t, err)
 	filter6, err := filters.NewTagsFilter(
-		filters.TagFilterValueMap{"shouldDrop2TagName1": filters.FilterValue{Pattern: "shouldDrop2TagValue1"}},
+		filters.TagFilterValueMap{filters.TagFilterValueMapKey{"shouldDrop2TagName1", false}: filters.FilterValue{Pattern: "shouldDrop2TagValue1"}},
 		filters.Conjunction,
 		testTagsFilterOptions(),
 	)
 	require.NoError(t, err)
 	filter7, err := filters.NewTagsFilter(
-		filters.TagFilterValueMap{"shouldNotDropTagName1": filters.FilterValue{Pattern: "shouldNotDropTagValue1"}},
+		filters.TagFilterValueMap{filters.TagFilterValueMapKey{"shouldNotDropTagName1", false}: filters.FilterValue{Pattern: "shouldNotDropTagValue1"}},
 		filters.Conjunction,
 		testTagsFilterOptions(),
 	)
@@ -5147,43 +5147,64 @@ func testMappingRules(t *testing.T) []*mappingRule {
 
 func testMappingRulesWithNames(t *testing.T) []*mappingRule {
 	filter1, err := filters.NewTagsFilter(
-		filters.TagFilterValueMap{"mtagName1": filters.FilterValue{Pattern: "mtagValue1"}, "name": filters.FilterValue{Pattern: "metric1"}},
+		filters.TagFilterValueMap{
+			filters.TagFilterValueMapKey{"mtagName1", false}: filters.FilterValue{Pattern: "mtagValue1"},
+			filters.TagFilterValueMapKey{"name", false}:      filters.FilterValue{Pattern: "metric1"},
+		},
 		filters.Conjunction,
 		testTagsFilterOptions(),
 	)
 	require.NoError(t, err)
 	filter2, err := filters.NewTagsFilter(
-		filters.TagFilterValueMap{"mtagName1": filters.FilterValue{Pattern: "mtagValue2"}, "name": filters.FilterValue{Pattern: "metric1"}},
+		filters.TagFilterValueMap{
+			filters.TagFilterValueMapKey{"mtagName1", false}: filters.FilterValue{Pattern: "mtagValue2"},
+			filters.TagFilterValueMapKey{"name", false}:      filters.FilterValue{Pattern: "metric1"},
+		},
 		filters.Conjunction,
 		testTagsFilterOptions(),
 	)
 	require.NoError(t, err)
 	filter3, err := filters.NewTagsFilter(
-		filters.TagFilterValueMap{"mtagName1": filters.FilterValue{Pattern: "mtagValue3"}, "name": filters.FilterValue{Pattern: "metric2"}},
+		filters.TagFilterValueMap{
+			filters.TagFilterValueMapKey{"mtagName1", false}: filters.FilterValue{Pattern: "mtagValue3"},
+			filters.TagFilterValueMapKey{"name", false}:      filters.FilterValue{Pattern: "metric2"},
+		},
 		filters.Conjunction,
 		testTagsFilterOptions(),
 	)
 	require.NoError(t, err)
 	filter4, err := filters.NewTagsFilter(
-		filters.TagFilterValueMap{"mtagName1": filters.FilterValue{Pattern: "mtagValue4"}, "name": filters.FilterValue{Pattern: "metric2"}},
+		filters.TagFilterValueMap{
+			filters.TagFilterValueMapKey{"mtagName1", false}: filters.FilterValue{Pattern: "mtagValue4"},
+			filters.TagFilterValueMapKey{"name", false}:      filters.FilterValue{Pattern: "metric2"},
+		},
 		filters.Conjunction,
 		testTagsFilterOptions(),
 	)
 	require.NoError(t, err)
 	filter5, err := filters.NewTagsFilter(
-		filters.TagFilterValueMap{"shouldDropTagName1": filters.FilterValue{Pattern: "shouldDropTagValue1"}, "name": filters.FilterValue{Pattern: "metric2"}},
+		filters.TagFilterValueMap{
+			filters.TagFilterValueMapKey{"shouldDropTagName1", false}: filters.FilterValue{Pattern: "shouldDropTagValue1"},
+			filters.TagFilterValueMapKey{"name", false}:               filters.FilterValue{Pattern: "metric2"},
+		},
 		filters.Conjunction,
 		testTagsFilterOptions(),
 	)
 	require.NoError(t, err)
 	filter6, err := filters.NewTagsFilter(
-		filters.TagFilterValueMap{"shouldDrop2TagName1": filters.FilterValue{Pattern: "shouldDrop2TagValue1"}, "name": filters.FilterValue{Pattern: "metric1"}},
+		filters.TagFilterValueMap{
+			filters.TagFilterValueMapKey{"shouldDrop2TagName1", false}: filters.FilterValue{Pattern: "shouldDrop2TagValue1"},
+			filters.TagFilterValueMapKey{"name", false}:                filters.FilterValue{Pattern: "metric1"},
+		},
 		filters.Conjunction,
 		testTagsFilterOptions(),
 	)
 	require.NoError(t, err)
 	filter7, err := filters.NewTagsFilter(
-		filters.TagFilterValueMap{"shouldNotDropTagName1": filters.FilterValue{Pattern: "shouldNotDropTagValue1"}, "name": filters.FilterValue{Pattern: "metric1"}},
+		filters.TagFilterValueMap{
+			filters.TagFilterValueMapKey{"shouldNotDropTagName1", false}: filters.FilterValue{Pattern: "shouldNotDropTagValue1"},
+			filters.TagFilterValueMapKey{"name", false}:                  filters.FilterValue{Pattern: "metric1"},
+		},
 		filters.Conjunction,
 		testTagsFilterOptions(),
 	)
@@ -5461,7 +5482,7 @@ func testMappingRulesWithNames(t *testing.T) []*mappingRule {
 func testKeepOriginalRollupRules(t *testing.T) []*rollupRule {
 	filter, err := filters.NewTagsFilter(
 		filters.TagFilterValueMap{
-			"rtagName1": filters.FilterValue{Pattern: "rtagValue1"},
+			filters.TagFilterValueMapKey{"rtagName1", false}: filters.FilterValue{Pattern: "rtagValue1"},
 		},
 		filters.Conjunction,
 		testTagsFilterOptions(),
@@ -5574,8 +5595,8 @@ func testKeepOriginalRollupRules(t *testing.T) []*rollupRule {
 func testRollupRules(t *testing.T) []*rollupRule {
 	filter1, err := filters.NewTagsFilter(
 		filters.TagFilterValueMap{
-			"rtagName1": filters.FilterValue{Pattern: "rtagValue1"},
-			"rtagName2": filters.FilterValue{Pattern: "rtagValue2"},
+			filters.TagFilterValueMapKey{"rtagName1", false}: filters.FilterValue{Pattern: "rtagValue1"},
+			filters.TagFilterValueMapKey{"rtagName2", false}: filters.FilterValue{Pattern: "rtagValue2"},
 		},
 		filters.Conjunction,
 		testTagsFilterOptions(),
@@ -5583,7 +5604,7 @@ func testRollupRules(t *testing.T) []*rollupRule {
 	require.NoError(t, err)
 	filter2, err := filters.NewTagsFilter(
 		filters.TagFilterValueMap{
-			"rtagName1": filters.FilterValue{Pattern: "rtagValue2"},
+			filters.TagFilterValueMapKey{"rtagName1", false}: filters.FilterValue{Pattern: "rtagValue2"},
 		},
 		filters.Conjunction,
 		testTagsFilterOptions(),
@@ -5591,7 +5612,7 @@ func testRollupRules(t *testing.T) []*rollupRule {
 	require.NoError(t, err)
 	filter3, err := filters.NewTagsFilter(
 		filters.TagFilterValueMap{
-			"rtagName1": filters.FilterValue{Pattern: "rtagValue3"},
+			filters.TagFilterValueMapKey{"rtagName1", false}: filters.FilterValue{Pattern: "rtagValue3"},
 		},
 		filters.Conjunction,
 		testTagsFilterOptions(),
@@ -5604,9 +5625,9 @@ func testRollupRules(t *testing.T) []*rollupRule {
 func testRollupRulesWithNames(t *testing.T) []*rollupRule {
 	filter1, err := filters.NewTagsFilter(
 		filters.TagFilterValueMap{
-			"rtagName1": filters.FilterValue{Pattern: "rtagValue1"},
-			"rtagName2": filters.FilterValue{Pattern: "rtagValue2"},
-			"name": filters.FilterValue{Pattern: "metric1"},
+			filters.TagFilterValueMapKey{"rtagName1", false}: filters.FilterValue{Pattern: "rtagValue1"},
+			filters.TagFilterValueMapKey{"rtagName2", false}: filters.FilterValue{Pattern: "rtagValue2"},
+			filters.TagFilterValueMapKey{"name", false}:      filters.FilterValue{Pattern: "metric1"},
 		},
 		filters.Conjunction,
 		testTagsFilterOptions(),
@@ -5614,8 +5635,8 @@ func testRollupRulesWithNames(t *testing.T) []*rollupRule {
 	require.NoError(t, err)
 	filter2, err := filters.NewTagsFilter(
 		filters.TagFilterValueMap{
-			"rtagName1": filters.FilterValue{Pattern: "rtagValue2"},
-			"name": filters.FilterValue{Pattern: "metric2"},
+			filters.TagFilterValueMapKey{"rtagName1", false}: filters.FilterValue{Pattern: "rtagValue2"},
+			filters.TagFilterValueMapKey{"name", false}:      filters.FilterValue{Pattern: "metric2"},
 		},
 		filters.Conjunction,
 		testTagsFilterOptions(),
@@ -5623,8 +5644,8 @@ func testRollupRulesWithNames(t *testing.T) []*rollupRule {
 	require.NoError(t, err)
 	filter3, err := filters.NewTagsFilter(
 		filters.TagFilterValueMap{
-			"rtagName1": filters.FilterValue{Pattern: "rtagValue3"},
-			"name": filters.FilterValue{Pattern: "metric1"},
+			filters.TagFilterValueMapKey{"rtagName1", false}: filters.FilterValue{Pattern: "rtagValue3"},
+			filters.TagFilterValueMapKey{"name", false}:      filters.FilterValue{Pattern: "metric1"},
 		},
 		filters.Conjunction,
 		testTagsFilterOptions(),
