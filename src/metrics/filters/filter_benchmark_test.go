@@ -36,15 +36,15 @@ var (
 		"tagname4=tagvalue4,tagname2=tagvalue2,tagname6=tagvalue6," +
 		"tagname5=tagvalue5,name=my.test.metric.name,tagname7=tagvalue7")
 
-	testTagsFilterMapOne = map[string]FilterValue{
-		"tagname1": FilterValue{Pattern: "tagvalue1"},
+	testTagsFilterMapOne = map[TagFilterValueMapKey]FilterValue{
+		TagFilterValueMapKey{"tagname1", false}: FilterValue{Pattern: "tagvalue1"},
 	}
 
-	testTagsFilterMapThree = map[string]FilterValue{
-		"tagname1":    FilterValue{Pattern: "tagvalue1"},
-		"tagname2":    FilterValue{Pattern: "tagvalue2"},
-		"tagname3":    FilterValue{Pattern: "tagvalue3"},
-		"faketagname": FilterValue{Pattern: "faketagvalue"},
+	testTagsFilterMapThree = map[TagFilterValueMapKey]FilterValue{
+		TagFilterValueMapKey{"tagname1", false}:    FilterValue{Pattern: "tagvalue1"},
+		TagFilterValueMapKey{"tagname2", false}:    FilterValue{Pattern: "tagvalue2"},
+		TagFilterValueMapKey{"tagname3", false}:    FilterValue{Pattern: "tagvalue3"},
+		TagFilterValueMapKey{"faketagname", false}: FilterValue{Pattern: "faketagvalue"},
 	}
 )
 
@@ -254,9 +254,9 @@ func newTestMapTagsFilter(
 	iterFn id.SortedTagIteratorFn,
 ) TagsFilter {
 	filters := make(map[string]Filter, len(tagFilters))
-	for name, value := range tagFilters {
+	for entry, value := range tagFilters {
 		filter, _ := NewFilterFromFilterValue(value)
-		filters[name] = filter
+		filters[entry.Name] = filter
 	}
 
 	return &testMapTagsFilter{

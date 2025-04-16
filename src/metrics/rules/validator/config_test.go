@@ -301,31 +301,31 @@ allowed:
 		},
 		{
 			filters: filters.TagFilterValueMap{
-				"randomTag": filters.FilterValue{Pattern: "counter"},
+				filters.TagFilterValueMapKey{"randomTag", false}: filters.FilterValue{Pattern: "counter"},
 			},
 			expectedTypes: []metric.Type{metric.CounterType, metric.TimerType, metric.GaugeType},
 		},
 		{
 			filters: filters.TagFilterValueMap{
-				"type": filters.FilterValue{Pattern: "counter"},
+				filters.TagFilterValueMapKey{"type", false}: filters.FilterValue{Pattern: "counter"},
 			},
 			expectedTypes: []metric.Type{metric.CounterType},
 		},
 		{
 			filters: filters.TagFilterValueMap{
-				"type": filters.FilterValue{Pattern: "timer"},
+				filters.TagFilterValueMapKey{"type", false}: filters.FilterValue{Pattern: "timer"},
 			},
 			expectedTypes: []metric.Type{metric.TimerType},
 		},
 		{
 			filters: filters.TagFilterValueMap{
-				"type": filters.FilterValue{Pattern: "gauge"},
+				filters.TagFilterValueMapKey{"type", false}: filters.FilterValue{Pattern: "gauge"},
 			},
 			expectedTypes: []metric.Type{metric.GaugeType},
 		},
 		{
 			filters: filters.TagFilterValueMap{
-				"type": filters.FilterValue{Pattern: "*er"},
+				filters.TagFilterValueMapKey{"type", false}: filters.FilterValue{Pattern: "*er"},
 			},
 			expectedTypes: []metric.Type{metric.CounterType, metric.TimerType},
 		},
@@ -353,10 +353,10 @@ allowed:
 
 	inputs := []filters.TagFilterValueMap{
 		filters.TagFilterValueMap{
-			"type": filters.FilterValue{Pattern: "a[b"},
+			filters.TagFilterValueMapKey{"type", false}: filters.FilterValue{Pattern: "a[b"},
 		},
 		filters.TagFilterValueMap{
-			"type": filters.FilterValue{Pattern: "ab{"},
+			filters.TagFilterValueMapKey{"type", false}: filters.FilterValue{Pattern: "ab{"},
 		},
 	}
 	for _, input := range inputs {

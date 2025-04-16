@@ -1785,8 +1785,9 @@ func testKVNamespaceValidator(t *testing.T) namespace.Validator {
 }
 
 func testMetricTypesFn() MetricTypesFn {
-	return func(filters filters.TagFilterValueMap) ([]metric.Type, error) {
-		fv, exists := filters[testTypeTag]
+	return func(filtersMap filters.TagFilterValueMap) ([]metric.Type, error) {
+		key := filters.NewTagFilterValueMapKey(testTypeTag, false)
+		fv, exists := filtersMap[key]
 		if !exists {
 			return []metric.Type{metric.UnknownType}, nil
 		}

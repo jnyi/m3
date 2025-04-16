@@ -61,14 +61,23 @@ type tagFilterSeparator struct {
 	negate bool
 }
 
+type TagFilterValueMapKey struct {
+	Name    string
+	Exclude bool
+}
+
+func NewTagFilterValueMapKey(name string, exclude bool) TagFilterValueMapKey {
+	return TagFilterValueMapKey{Name: name, Exclude: exclude}
+}
+
 // TagFilterValueMap is a map containing mappings from tag names to filter values.
-type TagFilterValueMap map[string]FilterValue
+type TagFilterValueMap map[TagFilterValueMapKey]FilterValue
 
 // ParseTagFilterValueMap parses the input string and creates a tag filter value map.
 func ParseTagFilterValueMap(str string) (TagFilterValueMap, error) {
 	trimmed := strings.TrimSpace(str)
 	tagPairs := strings.Split(trimmed, tagFilterListSeparator)
-	res := make(map[string]FilterValue, len(tagPairs))
+	res := make(map[TagFilterValueMapKey]FilterValue, len(tagPairs))
 	for _, p := range tagPairs {
 		sanitized := strings.TrimSpace(p)
 		if sanitized == "" {
@@ -79,11 +88,24 @@ func ParseTagFilterValueMap(str string) (TagFilterValueMap, error) {
 			return nil, err
 		}
 		// NB: we do not allow duplicate tags at the moment.
-		_, exists := res[parts[0]]
+		exclude := parts[0][0] == negationChar
+		name := parts[0]
+		if exclude {
+			name = parts[0][1:]
+		}
+		key := TagFilterValueMapKey{Name: name, Exclude: exclude}
+		_, exists := res[key]
 		if exists {
 			return nil, fmt.Errorf("invalid filter %s: duplicate tag %s found", str, parts[0])
 		}
-		res[parts[0]] = FilterValue{Pattern: parts[1], Negate: separator.negate}
+		if key.Exclude {
+			// For exclude rules, it doesn't make sense to have a value filter pattern since we are simply checking for the absence of the tag.
+			// To avoid confusion, we enforce that the value filter pattern is a wildcard.
+			if parts[1] != string(wildcardChar) {
+				return nil, fmt.Errorf("invalid filter %s: negation only supported for wildcard patterns", str)
+			}
+		}
+		res[key] = FilterValue{Pattern: parts[1], Negate: separator.negate}
 	}
 	return res, nil
 }
@@ -119,10 +141,16 @@ func parseTagFilter(str string) ([]string, tagFilterSeparator, error) {
 type tagFilter struct {
 	name        []byte
 	valueFilter Filter
+	// exclude indicates whether we want to check for the absence of the tag.
+	exclude bool
 }
 
 func (f *tagFilter) String() string {
-	return fmt.Sprintf("%s:%s", string(f.name), f.valueFilter.String())
+	excludePrefix := ""
+	if f.exclude {
+		excludePrefix = string(negationChar)
+	}
+	return fmt.Sprintf("%s%s:%s", excludePrefix, string(f.name), f.valueFilter.String())
 }
 
 type tagFiltersByNameAsc []tagFilter
@@ -164,12 +192,16 @@ func NewTagsFilter(
 		tagFilters      = make([]tagFilter, 0, len(filters))
 		nameFilterValue FilterValue
 	)
-	for name, value := range filters {
+	for entry, value := range filters {
+		// We disallow OR support for exclude rules for simplicity.
+		if entry.Exclude && op == Disjunction {
+			return nil, fmt.Errorf("Invalid filter %s: exclude not supported for disjunction", entry.Name)
+		}
 		valFilter, err := NewFilterFromFilterValue(value)
 		if err != nil {
 			return nil, err
 		}
-		bName := []byte(name)
+		bName := []byte(entry.Name)
 		if bytes.Equal(opts.NameTagKey, bName) {
 			nameFilter = valFilter
 			nameFilterValue = value
@@ -177,6 +209,7 @@ func NewTagsFilter(
 			tagFilters = append(tagFilters, tagFilter{
 				name:        bName,
 				valueFilter: valFilter,
+				exclude:     entry.Exclude,
 			})
 		}
 	}
@@ -210,7 +243,7 @@ func (f *tagsFilter) String() string {
 }
 
 func (f *tagsFilter) NameFilterValue() *FilterValue {
-	if f.nameFilter == nil { 
+	if f.nameFilter == nil {
 		return nil
 	}
 	return &f.nameFilterValue
@@ -248,6 +281,10 @@ func (f *tagsFilter) MatchesWithNameAndTags(name, tags []byte, opts TagMatchOpti
 
 		// Check if the current metric tag matches the current tag filter
 		comparison := bytes.Compare(name, f.tagFilters[currIdx].name)
+		if comparison == 0 && f.tagFilters[currIdx].exclude {
+			// We have a tagFilter that is looking for the absence of a tag.
+			return false, nil
+		}
 
 		// If the tags don't match, we move onto the next metric tag.
 		// This is correct because not every one of the metric tag's need be represented in the rule.
@@ -255,7 +292,30 @@ func (f *tagsFilter) MatchesWithNameAndTags(name, tags []byte, opts TagMatchOpti
 			continue
 		}
 
-		if comparison > 0 {
+		if comparison > 0 && f.tagFilters[currIdx].exclude {
+			// We have a tagFilter that is looking for the absence of a tag.
+			// Iterate through the remaining exclude tagFilters if any
+			currIdx++
+			for currIdx < len(f.tagFilters) && bytes.Compare(name, f.tagFilters[currIdx].name) > 0 && f.tagFilters[currIdx].exclude {
+				currIdx++
+			}
+
+			if currIdx == len(f.tagFilters) {
+				// We have reached the end after considering all exclude tag filters. Everything is good
+				continue
+			}
+			// We have reached the first tagFilter that is not an exclude tag filter.
+			newComparison := bytes.Compare(name, f.tagFilters[currIdx].name)
+			if newComparison < 0 {
+				// Not a problem
+				continue
+			} else if newComparison == 0 {
+				// Time to do a value match. Pass through
+			} else {
+				// We have a tagFilter that is looking for the presence of a tag and it's missing
+				return false, nil
+			}
+		} else if comparison > 0 {
 			if f.op == Conjunction {
 				// For AND, if the current filter tag doesn't exist, bail immediately.
 				return false, nil
@@ -291,11 +351,19 @@ func (f *tagsFilter) MatchesWithNameAndTags(name, tags []byte, opts TagMatchOpti
 	}
 
 	if iter.Err() != nil {
-		return false, iter.Err()
+		for currIdx < len(f.tagFilters) && f.tagFilters[currIdx].exclude {
+			currIdx++
+		}
+		if currIdx != len(f.tagFilters) {
+			return false, iter.Err()
+		}
 	}
 
 	if f.op == Disjunction {
 		return false, nil
+	}
+	for currIdx < len(f.tagFilters) && f.tagFilters[currIdx].exclude {
+		currIdx++
 	}
 
 	return currIdx == len(f.tagFilters), nil
@@ -310,12 +378,16 @@ func (f *tagsFilter) MatchTags(tags models.Tags) bool {
 	for i := 0; i < len(tags.Tags) && curr < len(f.tagFilters); i++ {
 		tag := tags.Tags[i]
 		comparison := bytes.Compare(tag.Name, f.tagFilters[curr].name)
+		if comparison == 0 && f.tagFilters[curr].exclude {
+			// We have a tagFilter that is looking for the absence of a tag.
+			return false
+		}
 		if comparison < 0 {
 			// If the tags don't match, we move onto the next metric tag.
 			// This is correct because not every one of the metric tag's need be represented in the rule.
 			continue
 		}
-		if comparison > 0 {
+		if comparison > 0 && !f.tagFilters[curr].exclude {
 			if f.op == Conjunction {
 				// For AND, if the current filter tag doesn't exist, bail immediately.
 				return false
@@ -324,6 +396,10 @@ func (f *tagsFilter) MatchTags(tags models.Tags) bool {
 			curr++
 			i--
 			continue
+		}
+		if comparison == 0 && f.tagFilters[curr].exclude {
+			// We have a tagFilter that is looking for the absence of a tag.
+			return false
 		}
 		match := f.tagFilters[curr].valueFilter.Matches(tag.Value)
 		if match && f.op == Disjunction {
@@ -335,6 +411,10 @@ func (f *tagsFilter) MatchTags(tags models.Tags) bool {
 		}
 		curr++
 	}
+	for curr < len(f.tagFilters) && f.tagFilters[curr].exclude {
+		curr++
+	}
+
 	return curr == len(f.tagFilters)
 }
 
@@ -346,10 +426,10 @@ func ValidateTagsFilter(str string) (TagFilterValueMap, error) {
 	if err != nil {
 		return nil, errors.NewValidationError(fmt.Sprintf("tags filter %s is malformed: %v", str, err))
 	}
-	for name, value := range filterValues {
+	for entry, value := range filterValues {
 		// Validating the filter value by actually constructing the filter.
 		if _, err := NewFilterFromFilterValue(value); err != nil {
-			return nil, errors.NewValidationError(fmt.Sprintf("tags filter %s contains invalid filter pattern %s for tag %s: %v", str, value.Pattern, name, err))
+			return nil, errors.NewValidationError(fmt.Sprintf("tags filter %s contains invalid filter pattern %s for tag %s: %v", str, value.Pattern, entry.Name, err))
 		}
 	}
 	return filterValues, nil
