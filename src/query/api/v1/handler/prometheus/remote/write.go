@@ -678,8 +678,8 @@ func (h *PromWriteHandler) forward(
 		if err != nil {
 			response = []byte(fmt.Sprintf("error reading body: %v", err))
 		}
-		return fmt.Errorf("expected status code 2XX: actual=%v, method=%v, url=%v, resp=%s",
-			resp.StatusCode, method, url, response)
+		return fmt.Errorf("expected status code 2XX: actual=%v, method=%v, url=%v, resp=%s, header=%v",
+			resp.StatusCode, method, url, response, header)
 	}
 
 	return nil
