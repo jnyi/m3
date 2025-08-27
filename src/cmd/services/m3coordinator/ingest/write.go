@@ -167,7 +167,7 @@ func NewDownsamplerAndWriter(
 	scope := instrumentOpts.MetricsScope().SubScope("downsampler")
 
 	// Define histogram buckets for latency durations (1ms to ~1000s)
-	latencyBuckets := tally.MustMakeExponentialDurationBuckets(time.Millisecond, 2, 20)
+	latencyBuckets := tally.MustMakeExponentialDurationBuckets(time.Millisecond, 2, 10)
 
 	return &downsamplerAndWriter{
 		store:       store,
