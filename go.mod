@@ -2,8 +2,6 @@ module github.com/m3db/m3
 
 go 1.23.0
 
-toolchain go1.24.6
-
 require (
 	github.com/MichaelTJones/pcg v0.0.0-20180122055547-df440c6ed7ed
 	github.com/RoaringBitmap/roaring v0.4.21
